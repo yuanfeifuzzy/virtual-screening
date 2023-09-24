@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "svs"
+version = "0.0.1"
+authors = [
+    {name="FEI YUAN", email="fei.yuan@bcm.edu"},
+    {name="Chong Lu", email="chong.lu@bcm.edu"},
+]
+description = "svs - smart virtual screening, a pipeline makes virtual easily to perform"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = 'MIT'}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    'cmder',
+    'loguru',
+    'rdkit',
+    'meeko',
+    'numpy',
+    'scipy',
+    'pandas'
+]
+
+[project.scripts]
+ligand-preparation = "svs.ligand_preparation:main"
+ligand-docking = "svs.ligand_docking:main"
+virtual-screening = "svs.virtual_screening:main"
+top-pose = "svs.top_pose:main"
+cluster-pose = "svs.cluster_pose:main"
+interaction-pose = "svs.interaction_pose:main"
+molecule-dynamics = "svs.molecule_dynamics:main"
