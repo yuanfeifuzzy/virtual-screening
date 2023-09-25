@@ -20,6 +20,8 @@ from loguru import logger
 from seqflow import task, Flow
 from pandarallel import pandarallel
 
+from svs import tools
+
 parser = argparse.ArgumentParser(prog='ligand-docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a directory contains prepared ligands or a parquet file "
                                    "contains path and descriptors to ligands")
@@ -35,9 +37,9 @@ parser.add_argument('-b', '--batch_size', default=1000, type=int, help='Maximum 
 parser.add_argument('-o', '--outdir', default='.', type=str,
                     help="Path to a directory for saving docking output files, default: %(default)s")
 
-parser.add_argument('--cpu', type=int,
+parser.add_argument('--cpu', type=int, default=4,
                     help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
-parser.add_argument('--gpu', type=int,
+parser.add_argument('--gpu', type=int, default=4,
                     help="Maximum number of GPUs can be used for parallel processing, default: %(default)s")
 
 parser.add_argument('-a', '--autodock', help="Path to AutoDock-GPU executable")
@@ -59,29 +61,20 @@ parser.add_argument('--dry', help='Only print out tasks and commands without act
                     action='store_true')
 
 args = parser.parse_args()
+
+tools.submit_or_skip(parser.prog, args,
+                     ['ligand', 'receptor', 'field'],
+                     ['pdb', 'flexible', 'filter', 'size', 'center', 'batch_size', 'quiet', 'verbose', 'outdir', 'cpu',
+                      'gpu', 'autodock', 'unidock', 'gnina', 'task'])
+
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
-
-if args.submit or args.hold:
-    prog, wd = parser.prog, utility.make_directory(args.wd, task=args.task, status=-1)
-    activation = utility.check_executable(prog).strip().replace(prog, 'activation', task=args.task, status=-2)
-    venv = f'source {activation}\ncd {wd}'
-    cmdline = utility.format_cmd(prog, args, ['ligand', 'receptor', 'field'],
-                                 ['pdb', 'flexible', 'filter', 'size', 'center', 'batch_size', 'quiet', 'verbose',
-                                  'outdir', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina', 'task'])
-    # options = utility.cmd_options(vars(args), nargs=['size', 'center'],
-    #                               excludes=['outdir', 'size', 'center', 'dependency', 'version', 'dry', 'hold'])
-    # cmdline = fr'sd \\\n  {args.source}\\\n  --outdir {outdir}\\\n  {options}'
-    #
-    # return_code, job_id = utility.submit(cmdline, dependency=args.dependency, venv=VENV, cpu=args.cpu, gpu=args.gpu,
-    #                                      memory=64, name='sd', day=10, hour=0,
-    #                                      script=Path(args.wd).resolve() / 'sd.submit.sh', hold=args.hold)
-    return_code, job_id = utility.submit(cmdline, venv=venv, cpu=args.cpu, name=prog, day=12, hold=args.hold,
-                                         script=f'{prog}.sh')
-    utility.update_status(return_code, job_id, args.task, 70)
-    sys.exit(0)
-
 OUTDIR = utility.make_directory(args.outdir)
 os.chdir(OUTDIR)
+
+SCORE = 'docking.scores.parquet'
+if Path(SCORE).exists():
+    utility.debug_and_exit('Docking results already exist, skip re-docking\n', task=args.task, status=80)
+
 LIGAND = utility.check_exist(args.ligand, f'Ligand {args.ligand} does not exist', task=args.task, status=-1)
 RECEPTOR = utility.check_file(args.receptor, f'Rigid receptor {args.receptor} is not a file or does not exist',
                               task=args.task, status=-1)
@@ -108,7 +101,7 @@ if not args.dry:
     elif args.gnina:
         utility.check_executable(args.gnina, task=args.task, status=-2)
     else:
-        utility.message_and_exit('No docking software executable was provide, cannot continue', task=args.task,
+        utility.error_and_exit('No docking software executable was provide, cannot continue', task=args.task,
                                  status=-2)
 
 CPUS = utility.get_available_cpus(cpus=args.cpu)
@@ -120,16 +113,16 @@ if LIGAND.is_file():
     if LIGAND.suffix == '.parquet':
         LIGAND_LIST = LIGAND
     else:
-        utility.message_and_exit(f'Invalid ligand file {LIGAND}, only accepts a file contains ligand descriptors '
+        utility.error_and_exit(f'Invalid ligand file {LIGAND}, only accepts a file contains ligand descriptors '
                                  f'in parquet format', task=args.task, status=-1)
 elif LIGAND.is_dir():
     LIGAND_LIST = LIGAND / f'descriptor.parquet'
     if LIGAND_LIST.is_file():
         logger.debug(f'Found ligand descriptor file {LIGAND_LIST}')
     else:
-        utility.message_and_exit(f'No ligand descriptor file was found, cannot continue', task=args.task, status=-1)
+        utility.error_and_exit(f'No ligand descriptor file was found, cannot continue', task=args.task, status=-1)
 else:
-    utility.message_and_exit(f'Invalid ligand {LIGAND}, only accept a descriptor file in parquet format '
+    utility.error_and_exit(f'Invalid ligand {LIGAND}, only accept a descriptor file in parquet format '
                              f'or a directory contains prepared ligands and corresponding descriptor file',
                              task=args.task, status=-1)
 
@@ -176,7 +169,8 @@ def get_ligand_list(inputs, outputs):
         if 'pdbqt' in df:
             utility.write(df, outputs, columns=['pdbqt'], index=False, header=False)
         else:
-            utility.message_and_exit(f'No prepared ligands in PDBQT format was found, cannot continue with AutoDock')
+            utility.error_and_exit(f'No prepared ligands in PDBQT format was found, cannot continue with AutoDock',
+                                   task=args.task, status=-1)
     else:
         utility.write(df, outputs, columns=['sdf'], index=False, header=False)
 
@@ -250,7 +244,7 @@ def autodock(batch, receptor=None, exe='', outdir='', verbose=False):
 
 
 def unidock(batch, receptor=None, outdir=None, exe='', verbose=False):
-    gpu_id , log = GPU_QUEUE.get(), Path(batch).with_suffix(".log").name
+    gpu_id, log = GPU_QUEUE.get(), Path(batch).with_suffix(".log").name
     (cx, cy, cz), (sx, sy, sz) = receptor['center'], receptor['size']
     cmd = (f'{exe} --receptor {receptor["rigid"]} '
            f'--ligand_index {batch} --devnum {gpu_id} --search_mode balance --scoring vina '
@@ -281,35 +275,34 @@ def gnina(ligand, receptor=None, outdir=None, exe='',  verbose=False):
 
 
 def get_score_from_autodock_dlg(dlg):
-    name, scores = Path(dlg).with_suffix('').name, []
+    scores = []
     with open(dlg) as f:
         for line in f:
             if 'Estimated Free Energy of Binding' in line:
                 scores.append(float(line.split()[-3].strip('=')))
-    return {'ligand': name, 'score': np.min(scores), 'idx': np.argmin(scores)}
+    return {'ligand': str(dlg), 'score': np.min(scores), 'idx': np.argmin(scores)}
 
 
 def get_score_from_unidock_sdf(sdf):
-    name, scores = Path(sdf).with_suffix('').name, []
+    scores = []
     with open(sdf) as f:
         for line in f:
             if line.startswith('ENERGY='):
                 scores.append(float(line.split()[1]))
-    return {'ligand': name, 'score': np.min(scores), 'idx': np.argmin(scores)}
+    return {'ligand': str(sdf), 'score': np.min(scores), 'idx': np.argmin(scores)}
 
 
 def get_score_form_gnina_sdf(sdf):
-    name, scores = Path(sdf).with_suffix('').name, []
-    '<minimizedAffinity>'
+    scores = []
     with open(sdf) as f:
         for line in f:
             if '<minimizedAffinity>' in line:
                 break
         scores.append(float(next(f).strip()))
-    return {'ligand': name, 'score': np.min(scores), 'idx': np.argmin(scores)}
+    return {'ligand': str(sdf), 'score': np.min(scores), 'idx': np.argmin(scores)}
 
 
-@task(inputs=prepare_ligand_list, outputs=['docking.scores.parquet'])
+@task(inputs=prepare_ligand_list, outputs=[SCORE])
 def docking(inputs, outputs):
     receptor = get_receptor(FIELD, RECEPTOR, pdb=args.pdb, flexible=args.flexible, size=args.size, center=args.center)
     with open(inputs) as f:
@@ -349,7 +342,7 @@ def main():
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Docking complete in {t.split(".")[0]}\n', task=args.task, status=80)
     except Exception as e:
-        utility.error_and_exit(f'Docking failed due to {e}\n', task=args.task, status=-80)
+        utility.error_and_exit(f'Docking failed due to {traceback.print_exception(e)}\n', task=args.task, status=-80)
 
 
 if __name__ == '__main__':

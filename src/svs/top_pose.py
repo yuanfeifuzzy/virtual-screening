@@ -5,21 +5,26 @@
 Get top poses from docking results
 """
 
-import argparse
 import sys
 import time
+import argparse
+import subprocess
+import traceback
 from pathlib import Path
+from datetime import timedelta
 
 import pandas as pd
 
-import subprocess
 import utility
 from rdkit import Chem
 from pandarallel import pandarallel
 
+from svs import tools
+
+logger = utility.setup_logger()
+
 
 def get_pose_from_dlg(dlg, idx):
-    print(dlg, idx)
     with subprocess.Popen([f'mk_export.py', dlg, '-'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as p:
         with Chem.ForwardSDMolSupplier(p.stdout) as f:
             for i, mol in enumerate(f):
@@ -60,10 +65,10 @@ def top_pose(score, top_percent=10, output='top.pose.sdf', cpu=8, quiet=False, v
     if cpu > 1:
         pandarallel.initialize(nb_workers=cpu, progress_bar=False, verbose=0)
         logger.debug(f'Retrieving best top poses with {cpu} CPUs ...')
-        df['molecule'] = df.parallel_apply(lambda row: get_pose_from_dlg(row.dlg, row.idx), axis=1)
+        df['molecule'] = df.parallel_apply(lambda row: get_pose(row.ligand, row.idx), axis=1)
     else:
         logger.debug(f'Retrieving best top poses with a single CPU ...')
-        df['molecule'] = df.apply(lambda row: get_pose_from_dlg(row.dlg, row.idx), axis=1)
+        df['molecule'] = df.apply(lambda row: get_pose(row.ligand, row.idx), axis=1)
 
     n = 0
     logger.debug(f'Saving best poses to {output}')
@@ -71,7 +76,10 @@ def top_pose(score, top_percent=10, output='top.pose.sdf', cpu=8, quiet=False, v
         for row in df.itertuples():
             mol = row.molecule
             if mol:
-                mol.SetProp("_Name", f'{Path(row.dlg).with_suffix(".dlg", "").name}_{row.score}')
+                name = Path(row.ligand).with_suffix("").name
+                if name.endswith('_out'):
+                    name = name.removesuffix('_out')
+                mol.SetProp("_Name", f'{name}_{row.score}')
                 o.write(mol)
                 n += 1
     logger.debug(f'Successfully saved {n:,} best top poses to {output}')
@@ -88,36 +96,29 @@ def main():
                         action='store_true')
     parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message',
                         action='store_true')
-    parser.add_argument('--wd', help="Path to work directory", default='.')
 
+    parser.add_argument('--wd', help="Path to work directory", default='.')
     parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
     parser.add_argument('--submit', action='store_true', help="Submit job to job queue instead of directly running it")
     parser.add_argument('--hold', action='store_true',
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    if args.submit or args.hold:
-        prog, wd = parser.prog, utility.make_directory(args.wd, task=args.task, status=-1)
-        activation = utility.check_executable(prog).strip().replace(prog, 'activation', task=args.task, status=-2)
-        venv = f'source {activation}\ncd {wd}'
-        cmdline = utility.format_cmd(prog, args, ['path'], ['top', 'output', 'cpu', 'quiet', 'verbose', 'task'])
-        # options = utility.cmd_options(vars(args), excludes=['submit', 'hold'])
-        # cmdline = fr'sd \\\n  {args.source}\\\n  --outdir {outdir}\\\n  {options}'
+    tools.submit_or_skip(parser.prog, args, ['path'], ['top', 'output', 'cpu', 'quiet', 'verbose', 'task'], day=1)
 
-        return_code, job_id = utility.submit(cmdline, venv=venv, cpu=args.cpu, name='top-pose', day=0, hour=16,
-                                             hold=args.hold, script=f'{prog}.sh')
-        utility.update_status(return_code, job_id, args.task, args.success)
-        sys.exit(0)
-    else:
-        try:
-            start = time.time()
-            output = args.output or Path(sdf).resolve().parent / 'top.pose.sdf'
-            top_pose(args.path, top_percent=args.top, output=output, cpu=args.cpu, quiet=args.quiet,
-                     verbose=args.verbose)
-            t = str(timedelta(seconds=time.time() - start))
-            utility.debug_and_exit(f'Get top pose complete in {t.split(".")[0]}\n', task=args.task, status=95)
-        except Exception as e:
-            utility.error_and_exit(f'Get top pose failed due to {e}\n', task=args.task, status=-95)
+    try:
+        start = time.time()
+        output = args.output or Path(sdf).resolve().parent / 'top.pose.sdf'
+        if output.exists():
+            utility.debug_and_exit(f'Top pose already exists, skip re-processing\n', task=args.task, status=95)
+
+        top_pose(args.path, top_percent=args.top, output=output, cpu=args.cpu, quiet=args.quiet,
+                 verbose=args.verbose)
+        t = str(timedelta(seconds=time.time() - start))
+        utility.debug_and_exit(f'Get top pose complete in {t.split(".")[0]}\n', task=args.task, status=95)
+    except Exception as e:
+        utility.error_and_exit(f'Get top pose failed due to {traceback.print_exception(e)}\n',
+                               task=args.task, status=-95)
 
 
 if __name__ == '__main__':

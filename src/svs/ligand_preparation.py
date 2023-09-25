@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import argparse
+import traceback
 from pathlib import Path
 from datetime import timedelta
 from multiprocessing import Pool
@@ -21,6 +22,8 @@ from slugify import slugify
 from rdkit.Chem import Descriptors
 from pandarallel import pandarallel
 from seqflow import task, Flow, logger
+
+from svs import tools
 
 parser = argparse.ArgumentParser(prog='ligand-preparation', description=__doc__.strip())
 parser.add_argument('source', help="Path to a single file contains raw ligands need to be prepared or "
@@ -45,22 +48,19 @@ parser.add_argument('--dry', help='Only print out tasks and commands without act
                     action='store_true')
 
 args = parser.parse_args()
+
+tools.submit_or_skip(parser.prog, args, 
+                     ['source'],
+                     ['outdir', 'ligprep', 'gypsum', 'pdbqt', 'batch_size', 'cpu', 'quiet','verbose', 'task', 'task'])
+
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
+outdir = utility.make_directory(args.outdir, task=args.task, status=-2)
+os.chdir(outdir)
 
-if args.submit or args.hold:
-    prog, wd = parser.prog, utility.make_directory(args.wd, task=args.task, status=-1)
-    activation = utility.check_executable(prog).strip().replace(prog, 'activation', task=args.task, status=-2)
-    venv = f'source {activation}\ncd {wd}'
-    cmdline = utility.format_cmd(prog, args, ['source'], ['outdir', 'ligprep', 'gypsum', 'pdbqt', 'batch_size', 'cpu',
-                                                          'quiet', 'verbose', 'task', 'task'])
-    # options = utility.cmd_options(vars(args), excludes=['source', 'outdir', 'version', 'dry', 'submit', 'hold'])
-    # cmdline = f'slp \\\n  {args.source}\\\n  --outdir {outdir}\\\n  {options}'
+DESCRIPTORS = f'descriptor.parquet'
+if Path(DESCRIPTORS).exists():
+    utility.debug_and_exit('Docking results already exist, skip re-docking\n', task=args.task, status=40)
 
-    return_code, job_id = utility.submit(cmdline, venv=venv, cpu=args.cpu, name=prog, day=12, hold=args.hold,
-                                         script=f'{prog}.sh')
-    utility.task_update(return_code, job_id, args.task, 0)
-    sys.exit(0)
-    
 source = utility.check_exist(args.source, f'The source of raw ligand {args.source} does not exist', task=args.task,
                              status=-1)
 if not args.dry:
@@ -69,7 +69,7 @@ if not args.dry:
     elif args.gypsum:
         utility.check_executable(args.gypsum, task=args.task, status=-2)
     else:
-        utility.message_and_exit('No ligand prepare software executable was provide, cannot continue', 
+        utility.error_and_exit('No ligand prepare software executable was provide, cannot continue', 
                                  task=args.task, status=-2)
 
 if source.is_file():
@@ -81,13 +81,11 @@ elif source.is_dir():
         utility.debug_and_exit(f'Found ligand descriptors in {descriptor} skip re-prepare ligands', task=args.task,
                                status=40)
     else:
-        utility.message_and_exit(f'A directory was given for prepared ligand, but no ligands.descriptors.parquet '
+        utility.error_and_exit(f'A directory was given for prepared ligand, but no ligands.descriptors.parquet '
                                  f'file was found', task=args.task, status=-40)
 else:
     utility.error_and_exit(f'{source} is not a file or directory, cannot continue', task=args.task, status=-2)
 
-outdir = utility.make_directory(args.outdir, task=args.task, status=-2)
-os.chdir(outdir)
 logger.debug(f'Output directory was set to {outdir}')
 
 CPUS = utility.get_available_cpus(cpus=args.cpu)
@@ -218,7 +216,7 @@ def sdf_to_pdbqt(sdf):
     return str(output)
 
 
-@task(inputs=separate_sdf, outputs=[f'descriptor.parquet'])
+@task(inputs=separate_sdf, outputs=[DESCRIPTORS])
 def prepare_pdbqt_ligand(inputs, output):
     if args.pdbqt:
         df = utility.read(inputs, f'Failed to load sdf file path and descriptors from {inputs}')
@@ -234,12 +232,13 @@ def prepare_pdbqt_ligand(inputs, output):
 def main():
     try:
         start = time.time()
-        flow = Flow('slp', short_description=__doc__.splitlines()[0], description=__doc__)
+        flow = Flow('ligand_preparation', short_description=__doc__.splitlines()[0], description=__doc__)
         flow.run(dry_run=args.dry, cpus=CPUS)
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Ligand preparation complete in {t.split(".")[0]}\n', task=args.task, status=40)
     except Exception as e:
-        utility.error_and_exit(f'Ligand preparation failed due to {e}\n', task=args.task, status=-40)
+        utility.error_and_exit(f'Ligand preparation failed due to {traceback.print_exception(e)}\n', task=args.task,
+                               status=-40)
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import timedelta
 
 import utility
 import numpy as np
@@ -20,10 +21,11 @@ from rdkit import Chem, DataStructs
 from rdkit.Chem import rdMolDescriptors
 from sklearn.cluster import MiniBatchKMeans
 
+from svs import tools
+
 logger = utility.setup_logger()
 
 METHODS = ('morgan2', 'morgan3', 'ap', 'rdk5')
-VENV = 'source /software/.development/smart-virtual-screening/venv/bin/activate'
 
 
 def generate_fingerprint(mol, bits=1024, method='rdk5'):
@@ -93,7 +95,7 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
 
 
 def main():
-    parser = argparse.ArgumentParser(prog='top-pose', description=__doc__.strip())
+    parser = argparse.ArgumentParser(prog='cluster-pose', description=__doc__.strip())
     parser.add_argument('path', help="Path to a parquet file contains docking scores")
     parser.add_argument('-o', '--output', help="Path to a output for saving best poses in each cluster "
                                                "in SDF format, default: %(default)s", default='cluster.pose.sdf')
@@ -107,37 +109,32 @@ def main():
                         action='store_true')
     parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message',
                         action='store_true')
-
+    
+    parser.add_argument('--wd', help="Path to work directory", default='.')
     parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
-    parser.add_argument('--success', type=int, default=0, help="Success code for the task")
     parser.add_argument('--submit', action='store_true', help="Submit job to job queue instead of directly running it")
     parser.add_argument('--hold', action='store_true',
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    outdir = Path(args.output).resolve().parent
-    if args.submit or args.hold:
-        options = utility.cmd_options(vars(args), excludes=['submit', 'hold'])
-        cmdline = fr'sd \\\n  {args.source}\\\n  --outdir {outdir}\\\n  {options}'
+    tools.submit_or_skip(parser.prog, args, ['path'],
+                         ['output', 'clusters', 'method', 'bits', 'cpu', 'quiet', 'verbose', 'task'], day=0)
+    
+    utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
+    
+    try:
+        start = time.time()
+        output = args.output or Path(sdf).resolve().parent / 'clster.pose.sdf'
+        if output.exists():
+            utility.debug_and_exit(f'Cluster pose already exists, skip re-processing\n', task=args.task, status=105)
 
-        return_code, job_id = utility.submit(cmdline, venv=VENV, cpu=args.cpu, name='cluster_pose', day=0, hour=16,
-                                             hold=args.hold)
-        utility.update_status(return_code, job_id, args.task, args.success)
-        sys.exit(0)
-    else:
-        try:
-            logger.debug('Running cluster_pose.py')
-            logger.debug('Sleep 180s')
-            time.sleep(180)
-            logger.debug('Running cluster_pose complete')
-            # clustering(args.path, n_clusters=args.clusters, method=args.method, bits=args.bits,
-            #            output=args.output, processes=args.cpu, quiet=args.quiet, verbose=args.verbose)
-            utility.update_status(0, 0, args.task, args.success)
-        except Exception as e:
-            logger.error(f'Failed to clustering poses due to {e}')
-            utility.update_status(1, 0, args.task, args.success)
-            sys.exit(1)
-
+        clustering(args.path, n_clusters=args.clusters, method=args.method, bits=args.bits, output=output,
+                   processes=args.cpu, quiet=args.quiet, verbose=args.verbose)
+        t = str(timedelta(seconds=time.time() - start))
+        utility.debug_and_exit(f'Cluster top pose complete in {t.split(".")[0]}\n', task=args.task, status=105)
+    except Exception as e:
+        utility.error_and_exit(f'Cluster top pose failed due to {traceback.print_exception(e)}\n',
+                               task=args.task, status=-105)
 
 
 if __name__ == '__main__':

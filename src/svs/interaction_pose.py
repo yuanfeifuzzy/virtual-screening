@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import argparse
+import traceback
 from pathlib import Path
 from datetime import timedelta
 
@@ -19,38 +20,39 @@ import utility
 from rdkit import Chem
 from pandarallel import pandarallel
 
+from svs import tools
+
 logger = utility.setup_logger()
 
 
-def pdb_to_sdf(pdb, sdf=''):
-    sdf = sdf if sdf else str(Path(pdb).with_suffix('.sdf'))
-    cmder.run(f'obabel {sdf} -O {sdf}')
-    return sdf
-
-
 def filter_interaction(sdf, pdb, residue_number, output='interaction.pose.sdf', 
-                       schrodinger='', quiet=False, verbose=False):
+                       schrodinger='', quiet=False, verbose=False, task=0):
     utility.setup_logger(quiet=quiet, verbose=verbose)
 
     schrodinger = schrodinger or os.environ.get('SCHRODINGER', '')
     if not schrodinger:
-        logger.error('No schrodinger was provided and cannot find SCHRODINGER')
-        sys.exit(1)
+        utility.error_and_exit('No schrodinger was provided and cannot find SCHRODINGER', task=task, status=-2)
         
-    receptor = pdb_to_sdf(pdb, str(Path(pdb).with_suffix('.sdf').name))
-    view = pose.view.sdf
+    receptor = str(Path(pdb).with_suffix('.sdf').name)
+    cmder.run(f'{schrodinger}/utilities/structconvert {pdb} {receptor}', exit_on_error=True)
+    # https://www.schrodinger.com/kb/286 $SCHRODINGER/run pv_convert.py -m combined.mae
+    view = Path(sdf).resolve().parent / 'pose.view.sdf'
+    # https://www.schrodinger.com/kb/1168#:~:text=Yes%2C%20you%20can%20create%20a,both%20compressed%20and%20uncompressed%20files.
     cmder.run(f'cat {receptor} {sdf} > {view}')
-    options = ' '.join([f'-asl {n} -hbond {i}' for i, n in enumerate(residue_number, 1)])
+    options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(residue_number, 1)])
     
     log = Path(output).with_suffix('.log')
-    cmder.run(f'{schrodinger}/run pose_filter.py {options} {view} {output} -LOCAL -WAIT > {log}')
+    # RuntimeError: Could not extract atoms from Structure 36 (.mae) / Structure 72 (.sdf)
+    cmder.run(f'{schrodinger}/run pose_filter.py {view} {output} {options} -WAIT -NOJOBID > {log}',
+              fmt_cmd=False, exit_on_error=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(prog='pose-interaction', description=__doc__.strip())
+    parser = argparse.ArgumentParser(prog='interaction-pose', description=__doc__.strip())
     parser.add_argument('sdf', help="Path to a SDF file stores docking poses")
     parser.add_argument('pdb', help="Path to a PDB file stores receptor structure")
-    parser.add_argument('residue', help="residue numbers that interact with ligand via hydrogen bond", nargs='+')
+    parser.add_argument('-r', '--residue', nargs='?', type=int,
+                        help="Residue numbers that interact with ligand via hydrogen bond")
     parser.add_argument('-o', '--output', help="Path to a SDF file for saving output poses")
     parser.add_argument('-s', '--schrodinger', help='Path to Schrodinger Suite root directory')
     parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message',
@@ -65,30 +67,28 @@ def main():
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    if args.submit or args.hold:
-        prog, wd = parser.prog, utility.make_directory(args.wd, task=args.task, status=-1)
-        activation = utility.check_executable(prog).strip().replace(prog, 'activation', task=args.task, status=-2)
-        venv = f'source {activation}\ncd {wd}'
-        cmdline = utility.format_cmd(prog, args, ['sdf', 'pdb', 'residue'],
-                                     ['output', 'schrodinger', 'quiet', 'verbose', 'task'])
-        # options = utility.cmd_options(vars(args), excludes=['submit', 'hold'])
-        # cmdline = fr'sd \\\n  {args.source}\\\n  --outdir {outdir}\\\n  {options}'
+    
+    tools.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
+                         ['residue', 'output', 'schrodinger', 'quiet', 'verbose', 'task'], day=0)
+    
+    try:
+        start = time.time()
+        output = args.output or Path(args.sdf).resolve().parent / 'interaction.pose.sdf'
+        
+        if output.exists():
+            utility.debug_and_exit(f'Interaction pose already exists, skip re-processing\n', task=args.task, status=115)
 
-        return_code, job_id = utility.submit(cmdline, venv=venv, name=prog, day=0, hour=16, hold=args.hold,
-                                             script=f'{prog}.sh')
-        utility.update_status(return_code, job_id, args.task, 95)
-        sys.exit(0)
-    else:
-        try:
-            start = time.time()
-            output = args.output or Path(sdf).resolve().parent / 'interaction.pose.sdf'
+        if args.residue:
             filter_interaction(args.sdf, args.pdb, args.residue, output=output, schrodinger=args.schrodinger,
-                               quiet=args.quiet, verbose=args.verbose)
-            t = str(timedelta(seconds=time.time() - start))
-            utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
-                                   task=args.task, status=110)
-        except Exception as e:
-            utility.error_and_exit(f'Filter interaction pose failed due to {e}\n', task=args.task, status=-110)
+                               quiet=args.quiet, verbose=args.verbose, task=args.task)
+        else:
+            cmder.run(f'cp {sdf} {output}')
+        t = str(timedelta(seconds=time.time() - start))
+        utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
+                               task=args.task, status=115)
+    except Exception as e:
+        utility.error_and_exit(f'Filter interaction pose failed due to {traceback.print_exception(e)}\n',
+                               task=args.task, status=-115)
 
 
 if __name__ == '__main__':
