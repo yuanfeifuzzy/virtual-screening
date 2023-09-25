@@ -134,7 +134,7 @@ def main():
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Cluster top pose complete in {t.split(".")[0]}\n', task=args.task, status=105)
     except Exception as e:
-        utility.error_and_exit(f'Cluster top pose failed due to {traceback.print_exception(e)}\n',
+        utility.error_and_exit(f'Cluster top pose failed due to\n{e}\n\n{traceback.format_exc()}\n',
                                task=args.task, status=-105)
 
 

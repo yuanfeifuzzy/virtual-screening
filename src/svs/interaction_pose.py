@@ -88,7 +88,7 @@ def main():
         utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
                                task=args.task, status=115)
     except Exception as e:
-        utility.error_and_exit(f'Filter interaction pose failed due to {traceback.print_exception(e)}\n',
+        utility.error_and_exit(f'Filter interaction pose failed due to\n{e}\n\n{traceback.format_exc()}',
                                task=args.task, status=-115)
 
 

@@ -240,7 +240,7 @@ def main():
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Ligand preparation complete in {t.split(".")[0]}\n', task=args.task, status=40)
     except Exception as e:
-        utility.error_and_exit(f'Ligand preparation failed due to {traceback.print_exception(e)}\n', task=args.task,
+        utility.error_and_exit(f'Ligand preparation failed due to:\n{e}\n\n{traceback.format_exc()}', task=args.task,
                                status=-40)
 
 

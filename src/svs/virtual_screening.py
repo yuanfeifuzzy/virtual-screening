@@ -113,7 +113,7 @@ def prepare_ligand(inputs, outputs):
                                           name='ligand-preparation', day=10, hour=0, hold=args.hold)
 
 
-@task(inputs=prepare_ligand, outputs=['docking/docking.score.parquet'], mkdir=['docking'])
+@task(inputs=prepare_ligand, outputs=['docking/docking.scores.parquet'], mkdir=['docking'])
 def molecule_docking(inputs, outputs):
     global DEPENDENCY
     kws = ('pdb', 'flexible', 'filter', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina', 'task', 'quiet', 'verbose')
@@ -184,8 +184,8 @@ def main():
         flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
         flow.run(dry_run=args.dry, cpus=args.cpu)
     except Exception as e:
-        utility.error_and_exit(f'Virtual screening failed due to:\n{traceback.format_exception(e)}\n',
-                               task=args.task, status=-40)
+        utility.error_and_exit(f'Virtual screening failed due to\n{e}\n\n{traceback.format_exc()}\n',
+                               task=args.task, status=-20)
 
 
 if __name__ == '__main__':

@@ -88,7 +88,7 @@ try:
     t = str(timedelta(seconds=time.time() - start))
     utility.debug_and_exit(f'MD complete in {t.split(".")[0]}\n', task=args.task, status=125)
 except Exception as e:
-    utility.error_and_exit(f'MD failed due to {traceback.print_exception(e)}\n', task=args.task, status=-1*125)
+    utility.error_and_exit(f'MD failed due to\n{e}\n\n{traceback.format_exc()}', task=args.task, status=-1*125)
 
 
 if __name__ == '__main__':
