@@ -53,7 +53,8 @@ def main():
     parser.add_argument('pdb', help="Path to a PDB file stores receptor structure")
     parser.add_argument('-r', '--residue', nargs='?', type=int,
                         help="Residue numbers that interact with ligand via hydrogen bond")
-    parser.add_argument('-o', '--output', help="Path to a SDF file for saving output poses")
+    parser.add_argument('-o', '--output', help="Path to a SDF file for saving output poses",
+                        default='interaction.pose.sdf')
     parser.add_argument('-s', '--schrodinger', help='Path to Schrodinger Suite root directory')
     parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message',
                         action='store_true')
@@ -73,13 +74,13 @@ def main():
     
     try:
         start = time.time()
-        output = args.output or Path(args.sdf).resolve().parent / 'interaction.pose.sdf'
+        output = Path(args.output) or Path(args.sdf).resolve().parent / 'interaction.pose.sdf'
         
         if output.exists():
             utility.debug_and_exit(f'Interaction pose already exists, skip re-processing\n', task=args.task, status=115)
 
         if args.residue:
-            filter_interaction(args.sdf, args.pdb, args.residue, output=output, schrodinger=args.schrodinger,
+            filter_interaction(args.sdf, args.pdb, args.residue, output=str(output), schrodinger=args.schrodinger,
                                quiet=args.quiet, verbose=args.verbose, task=args.task)
         else:
             cmder.run(f'cp {sdf} {output}')

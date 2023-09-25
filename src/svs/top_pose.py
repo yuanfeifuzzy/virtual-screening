@@ -108,11 +108,11 @@ def main():
 
     try:
         start = time.time()
-        output = args.output or Path(sdf).resolve().parent / 'top.pose.sdf'
+        output = Path(args.output) or Path(sdf).resolve().parent / 'top.pose.sdf'
         if output.exists():
             utility.debug_and_exit(f'Top pose already exists, skip re-processing\n', task=args.task, status=95)
 
-        top_pose(args.path, top_percent=args.top, output=output, cpu=args.cpu, quiet=args.quiet,
+        top_pose(args.path, top_percent=args.top, output=str(output), cpu=args.cpu, quiet=args.quiet,
                  verbose=args.verbose)
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Get top pose complete in {t.split(".")[0]}\n', task=args.task, status=95)

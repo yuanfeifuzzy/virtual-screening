@@ -10,6 +10,7 @@ import argparse
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from datetime import timedelta
 
@@ -124,11 +125,11 @@ def main():
     
     try:
         start = time.time()
-        output = args.output or Path(sdf).resolve().parent / 'clster.pose.sdf'
+        output = Path(args.output) or Path(sdf).resolve().parent / 'clster.pose.sdf'
         if output.exists():
             utility.debug_and_exit(f'Cluster pose already exists, skip re-processing\n', task=args.task, status=105)
 
-        clustering(args.path, n_clusters=args.clusters, method=args.method, bits=args.bits, output=output,
+        clustering(args.path, n_clusters=args.clusters, method=args.method, bits=args.bits, output=str(output),
                    processes=args.cpu, quiet=args.quiet, verbose=args.verbose)
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Cluster top pose complete in {t.split(".")[0]}\n', task=args.task, status=105)

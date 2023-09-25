@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import argparse
+import traceback
 from pathlib import Path
 from datetime import timedelta
 
@@ -108,6 +109,9 @@ CPUS = utility.get_available_cpus(cpus=args.cpu)
 GPU_QUEUE = utility.gpu_queue(n=args.gpu, task=args.task, status=-4)
 pandarallel.initialize(nb_workers=CPUS, progress_bar=False, verbose=0)
 
+job_id = os.environ.get('SLURM_JOB_ID', 0)
+utility.task_update(0, job_id, args.task, 70, error='', result='')
+
 LIGAND_LIST = ''
 if LIGAND.is_file():
     if LIGAND.suffix == '.parquet':
@@ -161,7 +165,7 @@ def get_ligand_list(inputs, outputs):
             filters = json.load(f)
 
         logger.debug(f'Filtering {df.shape[0]:,} ligands with {len(filters)} descriptor filters')
-        df = df.parallel_apply(filtering, axis=1, filters=filters)
+        df['filter'] = df.parallel_apply(filtering, axis=1, filters=filters)
         df = df[df['filter'] == '']
         logger.debug(f'Successfully filtered ligands and there are {df.shape[0]:,} ligands passed all filters')
 
@@ -342,7 +346,8 @@ def main():
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Docking complete in {t.split(".")[0]}\n', task=args.task, status=80)
     except Exception as e:
-        utility.error_and_exit(f'Docking failed due to {traceback.print_exception(e)}\n', task=args.task, status=-80)
+        traceback.print_exception(e)
+        utility.error_and_exit(f'Docking failed!\n', task=args.task, status=-80)
 
 
 if __name__ == '__main__':

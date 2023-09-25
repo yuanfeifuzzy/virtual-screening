@@ -91,6 +91,9 @@ logger.debug(f'Output directory was set to {outdir}')
 CPUS = utility.get_available_cpus(cpus=args.cpu)
 pandarallel.initialize(nb_workers=CPUS, progress_bar=False, verbose=0)
 
+job_id = os.environ.get('SLURM_JOB_ID', 0)
+utility.task_update(0, job_id, args.task, 30, error='', result='')
+
 
 @task(inputs=[source], outputs=[f'ligand.smiles'])
 def ligand_to_smiles(inputs, smiles):

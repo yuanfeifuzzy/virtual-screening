@@ -19,6 +19,6 @@ def submit_or_skip(prog, args, positional, optional, day=12, log='%x.%j.log'):
         cpu = args.cpu if hasattr(args, 'cpu') else 1
         gpu = args.gpu if hasattr(args, 'gpu') else 0
         return_code, job_id = utility.submit(cmdline, venv=venv, cpu=cpu, gpu=gpu, name=prog, day=day,
-                                             hold=args.hold, script=f'{prog}.sh')
+                                             hold=args.hold, script=f'{prog}.sh', log=log)
         utility.task_update(return_code, job_id, args.task, 0)
         sys.exit(0)

@@ -9,6 +9,7 @@ import os
 import sys
 import argparse
 import itertools
+import traceback
 from pathlib import Path
 from multiprocessing import Pool
 
@@ -179,8 +180,12 @@ def molecule_dynamics(inputs, outputs):
 
 
 def main():
-    flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
-    flow.run(dry_run=args.dry, cpus=args.cpu)
+    try:
+        flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
+        flow.run(dry_run=args.dry, cpus=args.cpu)
+    except Exception as e:
+        utility.error_and_exit(f'Virtual screening failed due to:\n{traceback.format_exception(e)}\n',
+                               task=args.task, status=-40)
 
 
 if __name__ == '__main__':
