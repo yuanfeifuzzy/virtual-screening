@@ -143,14 +143,14 @@ def cluster_pose(inputs, outputs):
     global DEPENDENCY
     dd = {k: v for k, v in vars(args).items() if k in ('cpu', 'method', 'bits', 'quiet', 'verbose', 'task')}
     cmd = ' \\\n  '.join(['cluster-pose', f'{outdir / inputs}', f'--output {outdir / outputs}',
-                          f'clusters {args.num_clusters}', utility.cmd_options(dd)])
+                          f'--clusters {args.num_clusters}', utility.cmd_options(dd)])
     
     _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
                                           name='cluster-pose', day=0, hour=16, hold=args.hold)
 
 
 @task(inputs=cluster_pose, outputs=['interaction.pose.sdf'])
-def filter_interaction(inputs, outputs):
+def interaction_pose(inputs, outputs):
     global DEPENDENCY
     cmd = (f'interaction-pose {inputs} {args.pdb} --output {outputs} --schrodinger {args.schrodinger} '
            f'--task {args.task} --wd {outdir}')
@@ -164,7 +164,7 @@ def filter_interaction(inputs, outputs):
                                           name='interaction-pose', day=0, hour=16, hold=args.hold)
 
 
-@task(inputs=filter_interaction, outputs=['md.pose.sdf'])
+@task(inputs=interaction_pose, outputs=['md/RMSD.csv'])
 def molecule_dynamics(inputs, outputs):
     global DEPENDENCY
     cmd = (f'molecule-dynamics {inputs} {args.pdb} --outdir {outdir / "md"} --openmm_simulate {args.openmm_simulate} '

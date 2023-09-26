@@ -25,7 +25,7 @@ from svs import tools
 logger = utility.setup_logger()
 
 
-def filter_interaction(sdf, pdb, residue_number, output='interaction.pose.sdf', 
+def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf',
                        schrodinger='', quiet=False, verbose=False, task=0):
     utility.setup_logger(quiet=quiet, verbose=verbose)
 
@@ -80,10 +80,10 @@ def main():
             utility.debug_and_exit(f'Interaction pose already exists, skip re-processing\n', task=args.task, status=115)
 
         if args.residue:
-            filter_interaction(args.sdf, args.pdb, args.residue, output=str(output), schrodinger=args.schrodinger,
-                               quiet=args.quiet, verbose=args.verbose, task=args.task)
+            interaction_pose(args.sdf, args.pdb, args.residue, output=str(output), schrodinger=args.schrodinger,
+                             quiet=args.quiet, verbose=args.verbose, task=args.task)
         else:
-            cmder.run(f'cp {sdf} {output}')
+            cmder.run(f'cp {args.sdf} {output}')
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
                                task=args.task, status=115)
