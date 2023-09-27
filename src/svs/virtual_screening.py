@@ -168,9 +168,11 @@ def interaction_pose(inputs, outputs):
 def molecule_dynamics(inputs, outputs):
     global DEPENDENCY
     cmd = (f'molecule-dynamics {inputs} {args.pdb} --outdir {outdir / "md"} --openmm_simulate {args.openmm_simulate} '
-           f'--time {args.md_time} --cpu {args.gpu*2} --gpu {args.gpu} --task {args.task} --wd {outdir}')
+           f' --cpu {args.gpu*2} --gpu {args.gpu} --task {args.task} --wd {outdir}')
     if args.residue:
-        cmd += f' --residue_number {" ".join(x for x in args.residume)}'
+        cmd += f' --time {args.md_time}'
+    else:
+        cmd += f' --short 5 --long 50'
     if args.quiet:
         cmd += ' --quiet'
     if args.verbose:

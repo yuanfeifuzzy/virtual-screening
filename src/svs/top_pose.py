@@ -29,7 +29,6 @@ def get_pose_from_dlg(dlg, idx):
         with Chem.ForwardSDMolSupplier(p.stdout) as f:
             for i, mol in enumerate(f):
                 if i == idx:
-                    print('done', dlg, idx)
                     return mol
 
 
@@ -76,9 +75,7 @@ def top_pose(score, top_percent=10, output='top.pose.sdf', cpu=8, quiet=False, v
         for row in df.itertuples():
             mol = row.molecule
             if mol:
-                name = Path(row.ligand).with_suffix("").name
-                if name.endswith('_out'):
-                    name = name.removesuffix('_out')
+                name = Path(row.ligand).with_suffix("").name.removesuffix("_out")
                 mol.SetProp("_Name", f'{name}_{row.score}')
                 o.write(mol)
                 n += 1

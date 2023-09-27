@@ -29,8 +29,7 @@ parser.add_argument('pdb', help="Path to a PDF file contains the structure for t
 parser.add_argument('-o', '--outdir', default='.', type=str,
                     help="Path to a directory for saving output files, default: %(default)s")
 parser.add_argument('-t', '--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
-parser.add_argument('--short', type=float, default=0, help="MD simulation time for short quick run, default: %(default)s ns.")
-parser.add_argument('--long', type=float, default=0, help="MD simulation time for long full run, default: %(default)s ns.")
+parser.add_argument('-s', '--short', type=float, default=0, help="MD simulation time for short quick run, default: %(default)s ns.")
 parser.add_argument('--rmsd', type=float, default=5.5, help="Max RMSD value for poses passing to long full run, default: %(default)s.")
 parser.add_argument('-c', "--cpu", type=int, default=4, help="Number of CPUs can be used, default: %(default)s.")
 parser.add_argument('-g', "--gpu", type=int, default=4, help="Number of GPUs can be used, default: %(default)s.")
@@ -56,7 +55,7 @@ if output.exists():
     utility.debug_and_exit('MD results already exist, skip re-simulate', task=args.task, status=125)
 
 tools.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
-                     ['outdir', 'time', 'gpu', 'openmm_simulate', 'quiet', 'verbose', 'task'], day=21)
+                     ['outdir', 'time', 'short', 'gpu', 'openmm_simulate', 'quiet', 'verbose', 'task'], day=21)
 
 GPU_QUEUE = utility.gpu_queue(n=args.gpu)
 
@@ -119,17 +118,19 @@ def main():
         if Path('RMSD.csv').exists():
             utility.debug_and_exit(f'MD skipped since results already exist\n', task=args.task, status=125)
         else:
-            if args.time:
-                logger.debug(f'Running single MD with time set to {args.time} ns')
-                items = prepare_md(sdf, pdb, args.time)
-                utility.parallel_gpu_task(openmm_md, items)
-            elif args.short:
+            if args.short:
                 logger.debug(f'Running short quick MD with time set to {args.short} ns')
                 items = prepare_md(sdf, pdb, args.short)
                 utility.parallel_gpu_task(openmm_md, items)
 
-                _, items = filter_rmsd(pdb=pdb, t=args.long, max_rmsd=args.rmsd)
-                logger.debug(f'Running long full MD with time set to {args.short} ns')
+                _, items = filter_rmsd(pdb=pdb, t=args.time, max_rmsd=args.rmsd)
+                if len(items) > 100:
+                    items = sorted(items, key=lambda x: float(x[0].removesuffix('.sdf').rsplit('_', 1)[1]))[:100]
+                logger.debug(f'Running long full MD with time set to {args.time} ns')
+                utility.parallel_gpu_task(openmm_md, items)
+            elif args.time:
+                logger.debug(f'Running single MD with time set to {args.time} ns')
+                items = prepare_md(sdf, pdb, args.time)
                 utility.parallel_gpu_task(openmm_md, items)
             else:
                 utility.error_and_exit(f'Neither a single time nor short time was specified, MD cannot continue',

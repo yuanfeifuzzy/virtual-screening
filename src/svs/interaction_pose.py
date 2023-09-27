@@ -83,6 +83,7 @@ def main():
             interaction_pose(args.sdf, args.pdb, args.residue, output=str(output), schrodinger=args.schrodinger,
                              quiet=args.quiet, verbose=args.verbose, task=args.task)
         else:
+            logger.debug('No residue was provided, interaction pose filter skipped')
             cmder.run(f'cp {args.sdf} {output}')
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
