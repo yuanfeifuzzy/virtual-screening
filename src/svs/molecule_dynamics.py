@@ -131,6 +131,8 @@ def main():
             elif args.time:
                 logger.debug(f'Running single MD with time set to {args.time} ns')
                 items = prepare_md(sdf, pdb, args.time)
+                if len(items) > 100:
+                    items = sorted(items, key=lambda x: float(x[0].removesuffix('.sdf').rsplit('_', 1)[1]))[:100]
                 utility.parallel_gpu_task(openmm_md, items)
             else:
                 utility.error_and_exit(f'Neither a single time nor short time was specified, MD cannot continue',

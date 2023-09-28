@@ -172,7 +172,7 @@ def molecule_dynamics(inputs, outputs):
     if args.residue:
         cmd += f' --time {args.md_time}'
     else:
-        cmd += f' --short 5 --long 50'
+        cmd += f' --short 5 --time {args.md_time}'
     if args.quiet:
         cmd += ' --quiet'
     if args.verbose:
