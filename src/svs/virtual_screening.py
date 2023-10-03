@@ -94,9 +94,13 @@ tools.submit_or_skip(parser.prog, args,
 outdir = utility.make_directory(args.outdir, task=args.task, status=-1)
 os.chdir(outdir)
     
-ligand = utility.check_exist(args.ligand, f'The provide ligand {args.ligand} does not exist')
-receptor = utility.check_file(args.receptor, f'The provide receptor {args.receptor} does not exist or not a file')
-field = utility.check_file(args.field, f'The provide field {args.field} does not exist or not a file')
+ligand = utility.check_exist(args.ligand, f'The provide ligand {args.ligand} does not exist', 
+                             task=args.task, status=-1)
+receptor = utility.check_file(args.receptor, 
+                              f'The provide receptor {args.receptor} does not exist or not a file', 
+                              task=args.task, status=-1)
+field = utility.check_file(args.field, f'The provide field {args.field} does not exist or not a file', 
+                           task=args.task, status=-1)
 activate = utility.check_executable(parser.prog, task=args.task, status=-2).strip().removesuffix('virtual-screening')
 venv = f'source {activate}activate\ncd {outdir}'
 
