@@ -19,8 +19,6 @@ import utility
 import pandas as pd
 from rdkit import Chem
 
-from svs import tools
-
 logger = utility.setup_logger()
 
 parser = argparse.ArgumentParser(prog='molecule-dynamics', description=__doc__.strip())
@@ -54,8 +52,8 @@ output = outdir / 'md.rmsd.csv'
 if output.exists():
     utility.debug_and_exit('MD results already exist, skip re-simulate', task=args.task, status=125)
 
-tools.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
-                     ['outdir', 'time', 'short', 'gpu', 'openmm_simulate', 'quiet', 'verbose', 'task'], day=21)
+utility.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
+                       ['outdir', 'time', 'short', 'gpu', 'openmm_simulate', 'quiet', 'verbose', 'task'], day=21)
 
 GPU_QUEUE = utility.gpu_queue(n=args.gpu)
 

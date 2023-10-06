@@ -21,7 +21,6 @@ from slugify import slugify
 from rdkit.Chem import Descriptors
 from seqflow import task, Flow, logger
 
-from svs import tools
 
 DEPENDENCY = os.environ.get('SLURM_JOB_ID', 0)
 METHODS = ('morgan2', 'morgan3', 'ap', 'rdk5')
@@ -34,7 +33,7 @@ parser.add_argument('field', help="Path to prepared receptor maps filed file in 
 
 parser.add_argument('-b', '--batch_size', default=2000, type=int,
                     help='Maximum number of items on each mini preparation or docking batch')
-parser.add_argument('-y', '--filter', help="Path to a JSON file contains ligand filters")
+parser.add_argument('--filter', help="Path to a JSON file contains ligand filters")
 parser.add_argument('--ligprep', help="Path to the executable of ligprep")
 parser.add_argument('--gypsum', help="Path to the executable of gypsum_dl package")
 
@@ -84,11 +83,11 @@ args = parser.parse_args()
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
 log = f'{parser.prog}.log'
 
-tools.submit_or_skip(parser.prog, args, 
+utility.submit_or_skip(parser.prog, args,
                      ['ligand', 'receptor', 'field'],
                      ['pdb', 'flexible', 'filter', 'ligprep', 'gypsum', 'size', 'center', 'batch_size',
                       'quiet', 'verbose', 'outdir', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina',
-                      'top_percent', 'num_clusters', 'method', 'bits', 'md_time', 'residue_number', 'task'], 
+                      'top_percent', 'num_clusters', 'method', 'bits', 'md_time', 'residue_number', 'wd', 'task'],
                      day=21, log=log)
 
 outdir = utility.make_directory(args.outdir, task=args.task, status=-1)
@@ -120,10 +119,14 @@ def prepare_ligand(inputs, outputs):
 @task(inputs=prepare_ligand, outputs=['docking/docking.scores.parquet'], mkdir=['docking'])
 def molecule_docking(inputs, outputs):
     global DEPENDENCY
-    kws = ('pdb', 'flexible', 'filter', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina', 'task', 'quiet', 'verbose')
+    kws = ('flexible', 'filter', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina', 'task', 'quiet', 'verbose')
     nargs = ('size', 'center')
-    dd = {k: v for k, v in vars(args).items() if k in kws or k in nargs}
-    cmd = ' \\\n  '.join(['ligand-docking', str(ligand), str(args.receptor), str(args.field), 
+    dd = {k: v for k, v in vars(args).items() if k in kws}
+    for k, v in vars(args).items():
+        if k in nargs:
+            dd[k] = ' '.join([str(x) for x in v])
+
+    cmd = ' \\\n  '.join(['ligand-docking', str(ligand), str(args.receptor), str(args.field),
                           f'--outdir {outdir / "docking"}',
                           f'--batch_size {args.batch_size}', utility.cmd_options(dd)])
     
@@ -181,14 +184,16 @@ def molecule_dynamics(inputs, outputs):
         cmd += ' --quiet'
     if args.verbose:
         cmd += ' --verbose'
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
-                                          name='molecule-dynamics', day=21, hold=args.hold)
+    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu,
+                                          gpu=args.gpu, log=log, name='molecule-dynamics', day=21, hold=args.hold)
 
 
 def main():
     try:
         flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
         flow.run(dry_run=args.dry, cpus=args.cpu)
+        utility.debug_and_exit(f'Virtual screening complete in {t.split(".")[0]}\n',
+                               task=args.task, status=140)
     except Exception as e:
         utility.error_and_exit(f'Virtual screening failed due to\n{e}\n\n{traceback.format_exc()}\n',
                                task=args.task, status=-20)

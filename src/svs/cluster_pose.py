@@ -22,8 +22,6 @@ from rdkit import Chem, DataStructs
 from rdkit.Chem import rdMolDescriptors
 from sklearn.cluster import MiniBatchKMeans
 
-from svs import tools
-
 logger = utility.setup_logger()
 
 METHODS = ('morgan2', 'morgan3', 'ap', 'rdk5')
@@ -118,8 +116,8 @@ def main():
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    tools.submit_or_skip(parser.prog, args, ['path'],
-                         ['output', 'clusters', 'method', 'bits', 'cpu', 'quiet', 'verbose', 'task'], day=0)
+    utility.submit_or_skip(parser.prog, args, ['path'],
+                           ['output', 'clusters', 'method', 'bits', 'cpu', 'quiet', 'verbose', 'task'], day=0)
     
     utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
     

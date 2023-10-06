@@ -21,14 +21,12 @@ from loguru import logger
 from seqflow import task, Flow
 from pandarallel import pandarallel
 
-from svs import tools
 
 parser = argparse.ArgumentParser(prog='ligand-docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a directory contains prepared ligands or a parquet file "
                                    "contains path and descriptors to ligands")
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file")
 parser.add_argument('field', help="Path to prepared receptor maps filed file in .maps.fld format file")
-parser.add_argument('-p', '--pdb', help="Path to receptor structure in .pdbqt format file")
 parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor in .pdbqt format file")
 parser.add_argument('-y', '--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=float, nargs='+')
@@ -63,10 +61,10 @@ parser.add_argument('--dry', help='Only print out tasks and commands without act
 
 args = parser.parse_args()
 
-tools.submit_or_skip(parser.prog, args,
-                     ['ligand', 'receptor', 'field'],
-                     ['pdb', 'flexible', 'filter', 'size', 'center', 'batch_size', 'quiet', 'verbose', 'outdir', 'cpu',
-                      'gpu', 'autodock', 'unidock', 'gnina', 'task'])
+utility.submit_or_skip(parser.prog, args,
+                       ['ligand', 'receptor', 'field'],
+                       ['flexible', 'filter', 'size', 'center', 'batch_size', 'quiet', 'verbose', 'outdir', 'cpu',
+                        'gpu', 'autodock', 'unidock', 'gnina', 'task', 'wd'])
 
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
 OUTDIR = utility.make_directory(args.outdir)
@@ -82,8 +80,6 @@ RECEPTOR = utility.check_file(args.receptor, f'Rigid receptor {args.receptor} is
 FIELD = utility.check_file(args.field, f'Map filed {args.field} is not a file or does not exist',
                            task=args.task, status=-1)
 
-if args.pdb:
-    utility.check_file(args.pdb, f'PDB {args.pdb} is not a file or does not exist', task=args.task, status=-1)
 if args.flexible:
     utility.check_file(args.flexible, f'Flexible receptor {args.flexible} is not a file or does not exist',
                        task=args.task, status=-1)
@@ -110,7 +106,7 @@ GPU_QUEUE = utility.gpu_queue(n=args.gpu, task=args.task, status=-4)
 pandarallel.initialize(nb_workers=CPUS, progress_bar=False, verbose=0)
 
 job_id = os.environ.get('SLURM_JOB_ID', 0)
-utility.task_update(0, job_id, args.task, 70, error='', result='')
+utility.task_update(args.task, 70)
 
 LIGAND_LIST = ''
 if LIGAND.is_file():
@@ -228,11 +224,11 @@ def get_size_center(fld):
     return size, center
 
 
-def get_receptor(field, rigid, pdb='', flexible='', size=None, center=None):
+def get_receptor(field, rigid, flexible='', size=None, center=None):
     if not size or not center:
         size, center = get_size_center(field)
 
-    receptor = {'field': field, 'rigid': rigid, 'pdb': pdb, 'flexible': flexible, 'size': size, 'center': center}
+    receptor = {'field': field, 'rigid': rigid, 'flexible': flexible, 'size': size, 'center': center}
     return receptor
 
 
@@ -308,7 +304,7 @@ def get_score_form_gnina_sdf(sdf):
 
 @task(inputs=prepare_ligand_list, outputs=[SCORE])
 def docking(inputs, outputs):
-    receptor = get_receptor(FIELD, RECEPTOR, pdb=args.pdb, flexible=args.flexible, size=args.size, center=args.center)
+    receptor = get_receptor(FIELD, RECEPTOR, flexible=args.flexible, size=args.size, center=args.center)
     with open(inputs) as f:
         batches = (line for line in f)
         if args.autodock:
@@ -324,8 +320,8 @@ def docking(inputs, outputs):
                                       outdir=OUTDIR, verbose=args.verbose, chunksize=1000)
             df = utility.parallel_cpu_task(get_score_form_gnina_sdf, OUTDIR.glob('*.sdf'), processes=CPUS)
 
-        cmder.run(f'zip docking.log.zip *.log')
-        cmder.run(f'rm *.log')
+        cmder.run(f'zip docking.log.zip batches.*.log')
+        cmder.run(f'rm batches.*.log')
 
         df = pd.DataFrame(df)
         if df.empty:

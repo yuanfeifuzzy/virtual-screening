@@ -20,7 +20,6 @@ import utility
 from rdkit import Chem
 from pandarallel import pandarallel
 
-from svs import tools
 
 logger = utility.setup_logger()
 
@@ -69,8 +68,8 @@ def main():
 
     args = parser.parse_args()
     
-    tools.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
-                         ['residue', 'output', 'schrodinger', 'quiet', 'verbose', 'task'], day=0)
+    utility.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
+                           ['residue', 'output', 'schrodinger', 'quiet', 'verbose', 'task'], day=0)
     
     try:
         start = time.time()

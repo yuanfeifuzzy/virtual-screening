@@ -23,7 +23,6 @@ from rdkit.Chem import Descriptors
 from pandarallel import pandarallel
 from seqflow import task, Flow, logger
 
-from svs import tools
 
 parser = argparse.ArgumentParser(prog='ligand-preparation', description=__doc__.strip())
 parser.add_argument('source', help="Path to a single file contains raw ligands need to be prepared or "
@@ -49,9 +48,10 @@ parser.add_argument('--dry', help='Only print out tasks and commands without act
 
 args = parser.parse_args()
 
-tools.submit_or_skip(parser.prog, args, 
-                     ['source'],
-                     ['outdir', 'ligprep', 'gypsum', 'pdbqt', 'batch_size', 'cpu', 'quiet','verbose', 'task', 'task'])
+utility.submit_or_skip(parser.prog, args,
+                       ['source'],
+                       ['outdir', 'ligprep', 'gypsum', 'pdbqt', 'batch_size', 'cpu', 'quiet', 'verbose',
+                        'wd', 'task'])
 
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
 outdir = utility.make_directory(args.outdir, task=args.task, status=-2)
@@ -91,8 +91,7 @@ logger.debug(f'Output directory was set to {outdir}')
 CPUS = utility.get_available_cpus(cpus=args.cpu)
 pandarallel.initialize(nb_workers=CPUS, progress_bar=False, verbose=0)
 
-job_id = os.environ.get('SLURM_JOB_ID', 0)
-utility.task_update(0, job_id, args.task, 30, error='', result='')
+utility.task_update(args.task, 30)
 
 
 @task(inputs=[source], outputs=[f'ligand.smiles'])

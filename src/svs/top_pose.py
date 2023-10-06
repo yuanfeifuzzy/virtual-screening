@@ -19,8 +19,6 @@ import utility
 from rdkit import Chem
 from pandarallel import pandarallel
 
-from svs import tools
-
 logger = utility.setup_logger()
 
 
@@ -101,7 +99,7 @@ def main():
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    tools.submit_or_skip(parser.prog, args, ['path'], ['top', 'output', 'cpu', 'quiet', 'verbose', 'task'], day=1)
+    utility.submit_or_skip(parser.prog, args, ['path'], ['top', 'output', 'cpu', 'quiet', 'verbose', 'task'], day=1)
 
     try:
         start = time.time()
