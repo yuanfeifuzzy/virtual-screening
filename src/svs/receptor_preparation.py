@@ -59,7 +59,6 @@ def main():
         ligand_types = "-p ligand_types='A,C,HD,N,NA,OA,SA,S,P,Br,F,Cl'"
         grid_center = f"-p gridcenter='{args.center_x},{args.center_y},{args.center_z}'"
         x, y, z = int(args.x / 0.375), int(args.y / 0.375), int(args.z / 0.375)
-        print(x, y, z, args.x, args.y, args.z)
         cmd = f"{prepare_gpf4} -r {pdbqt} {ligand_types} {grid_center} -p npts='{x},{y},{z}'"
         
         p = cmder.run(cmd, cwd=str(wd), exit_on_error=False, fmt_cmd=False)

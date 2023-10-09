@@ -237,7 +237,8 @@ def main():
         flow = Flow('ligand_preparation', short_description=__doc__.splitlines()[0], description=__doc__)
         flow.run(dry_run=args.dry, cpus=CPUS)
         t = str(timedelta(seconds=time.time() - start))
-        utility.debug_and_exit(f'Ligand preparation complete in {t.split(".")[0]}\n', task=args.task, status=40)
+        utility.debug_and_exit(f'Ligand preparation complete in {t.split(".")[0]}\n', task=args.task,
+                               status=40, descriptor=str(outdir / DESCRIPTORS))
     except Exception as e:
         utility.error_and_exit(f'Ligand preparation failed due to:\n{e}\n\n{traceback.format_exc()}', task=args.task,
                                status=-40)

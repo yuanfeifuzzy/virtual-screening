@@ -7,10 +7,12 @@ A pipeline for perform virtual screening in an easy an smart way
 import json
 import os
 import sys
+import time
 import argparse
 import itertools
 import traceback
 from pathlib import Path
+from datetime import timedelta
 from multiprocessing import Pool
 
 import cmder
@@ -53,7 +55,7 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
                     default=METHODS[-1], choices=METHODS)
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('-m', '--md_time', help="Time (in nanosecond) needs for molecule dynamics simulation, "
-                                                "default: %(default)s", type=int, default=50)
+                                                "default: %(default)s", type=float, default=50)
 parser.add_argument('-r', '--residue', nargs='?', type=int,
                         help="Residue numbers that interact with ligand via hydrogen bond")
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory')
@@ -190,8 +192,10 @@ def molecule_dynamics(inputs, outputs):
 
 def main():
     try:
+        start = time.time()
         flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
         flow.run(dry_run=args.dry, cpus=args.cpu)
+        t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Virtual screening complete in {t.split(".")[0]}\n',
                                task=args.task, status=140)
     except Exception as e:
