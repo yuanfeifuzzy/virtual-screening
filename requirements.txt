@@ -23,4 +23,4 @@ seqflow==0.1.4
 six==1.16.0
 text-unidecode==1.3
 tzdata==2023.3
-utility @ git+http://tanlab.ad.bcm.edu:3000/TanLab/utility.git@641edf2e7a83983484f60e7eaaf030c7c1fb4095
+utility @ git+http://tanlab.ad.bcm.edu:3000/TanLab/utility.git@eff41e43e216bc7722c3803dfe2768deca51ad19
