@@ -24,25 +24,29 @@ from rdkit.Chem import Descriptors
 from seqflow import task, Flow, logger
 
 
-DEPENDENCY = os.environ.get('SLURM_JOB_ID', 0)
 METHODS = ('morgan2', 'morgan3', 'ap', 'rdk5')
 
 parser = argparse.ArgumentParser(prog='virtual-screening', description=__doc__.strip())
-parser.add_argument('ligand', help="Path to a single file contains raw ligand or a directory "
-                                   "contains prepared ligands")
+parser.add_argument('ligand', help="Path to a single SDF file contains prepared ligands")
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file")
 parser.add_argument('field', help="Path to prepared receptor maps filed file in .maps.fld format file")
 
-parser.add_argument('-b', '--batch_size', default=2000, type=int,
-                    help='Maximum number of items on each mini preparation or docking batch')
-parser.add_argument('--filter', help="Path to a JSON file contains ligand filters")
-parser.add_argument('--ligprep', help="Path to the executable of ligprep")
-parser.add_argument('--gypsum', help="Path to the executable of gypsum_dl package")
-
 parser.add_argument('-p', '--pdb', help="Path to receptor structure in .pdbqt format file")
 parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor in .pdbqt format file")
-parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=float, nargs='+')
+parser.add_argument('--filter', help="Path to a JSON file contains ligand filters")
+parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
 parser.add_argument('-c', '--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
+
+parser.add_argument('--cpu', type=int, default=32,
+                    help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
+parser.add_argument('--gpu', type=int, default=4,
+                    help="Maximum number of GPUs can be used for docking, default: %(default)s")
+
+parser.add_argument('-o', '--outdir', default='.', type=str,
+                    help="Path to a directory for saving output files, default: %(default)s")
+parser.add_argument('--scratch', default='/scratch', type=str,
+                    help="Path to the scratch directory, default: %(default)s")
+
 parser.add_argument('--autodock', help="Path to AutoDock-GPU executable")
 parser.add_argument('--unidock', help="Path to AutoDock-GPU executable")
 parser.add_argument('--gnina', help="Path to AutoDock-GPU executable")
@@ -61,20 +65,14 @@ parser.add_argument('-r', '--residue', nargs='?', type=int,
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory')
 parser.add_argument('--openmm_simulate', help='Path to openmm_simulate executable')
 
-parser.add_argument('-o', '--outdir', help="Path to a directory for saving output files", default='.')
-
-parser.add_argument('--cpu', type=int, default=32,
-                    help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
-parser.add_argument('--gpu', type=int, default=4, 
-                    help="Maximum number of GPUs can be used for docking, default: %(default)s")
-
 parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message',
                     action='store_true')
 parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message',
                     action='store_true')
 
 parser.add_argument('--wd', help="Path to work directory", default='.')
-parser.add_argument('--task', type=int, help="An ID associated with the task")
+parser.add_argument('--task', type=int, help="An ID associated with the task", default=0)
+
 parser.add_argument('--submit', action='store_true', help="Submit job to job queue instead of directly running it")
 parser.add_argument('--hold', action='store_true', help="Hold the submission without actually submit the job to the queue")
 parser.add_argument('--dry', help='Only print out tasks and commands without actually running them.',
@@ -86,108 +84,86 @@ utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
 log = f'{parser.prog}.log'
 
 utility.submit_or_skip(parser.prog, args,
-                     ['ligand', 'receptor', 'field'],
-                     ['pdb', 'flexible', 'filter', 'ligprep', 'gypsum', 'size', 'center', 'batch_size',
-                      'quiet', 'verbose', 'outdir', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina',
-                      'top_percent', 'num_clusters', 'method', 'bits', 'md_time', 'residue_number', 'wd', 'task'],
-                     day=21, log=log)
+                       ['ligand', 'receptor', 'field'],
+                       ['pdb', 'flexible', 'filter', 'size', 'center', 'cpu', 'gpu',
+                        'outdir', 'scratch', 'autodock', 'unidock', 'gnina',
+                        'top_percent', 'num_clusters', 'method', 'bits', 'md_time', 'residue',
+                        'schrodinger', 'openmm_simulate',
+                        'quiet', 'verbose', 'wd', 'task'],
+                       day=21, log=log)
 
 outdir = utility.make_directory(args.outdir, task=args.task, status=-1)
 os.chdir(outdir)
-    
-ligand = utility.check_exist(args.ligand, f'The provide ligand {args.ligand} does not exist', 
-                             task=args.task, status=-1)
+
+ligand = utility.check_file(args.ligand, f'The provide ligand {args.ligand} does not exist or not a file',
+                            task=args.task, status=-1)
 receptor = utility.check_file(args.receptor, 
                               f'The provide receptor {args.receptor} does not exist or not a file', 
                               task=args.task, status=-1)
 field = utility.check_file(args.field, f'The provide field {args.field} does not exist or not a file', 
                            task=args.task, status=-1)
 activate = utility.check_executable(parser.prog, task=args.task, status=-2).strip().removesuffix('virtual-screening')
-venv = f'source {activate}activate\ncd {outdir}'
+venv = f'source {activate}activate\ncd {outdir} || exit 1'
 
 
-@task(inputs=[ligand], outputs=[ligand / 'descriptor.parquet' if ligand.is_dir() else ligand])
-def prepare_ligand(inputs, outputs):
-    global DEPENDENCY
-    dd = {k: v for k, v in vars(args).items() if k in ('gypsum', 'ligprep', 'pdbqt', 'cpu', 'quiet', 'verbose', 'task')}
-    cmd = ' \\\n  '.join(['ligand-preparation', str(inputs), f'--outdir {outputs.parent}', 
-                          f'--batch_size {args.batch_size}',
-                          utility.cmd_options(dd)])
-
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
-                                          name='ligand-preparation', day=10, hour=0, hold=args.hold)
-
-
-@task(inputs=prepare_ligand, outputs=['docking/docking.scores.parquet'], mkdir=['docking'])
+@task(inputs=[str(ligand)], outputs=['docking.scores.parquet'])
 def molecule_docking(inputs, outputs):
-    global DEPENDENCY
-    kws = ('flexible', 'filter', 'cpu', 'gpu', 'autodock', 'unidock', 'gnina', 'task', 'quiet', 'verbose')
-    nargs = ('size', 'center')
-    dd = {k: v for k, v in vars(args).items() if k in kws}
-    for k, v in vars(args).items():
-        if k in nargs:
-            dd[k] = ' '.join([str(x) for x in v])
+    (sx, sy, sz), (cx, cy, cz) = args.size, args.center
+    cmd = (f'unidock {ligand} {receptor} '
+           f'--size {sx} {sy} {sz} --center {cx} {cy} {cz} '
+           f'--outdir {outdir} --scratch {args.scratch} '
+           f'--cpu {args.cpu} --gpu {args.gpu} '
+           f'--exe {args.unidock} --task {args.task} --verbose')
+    if args.filter:
+        cmd += f' --filter {args.filter}'
+    if args.flexible:
+        cmd += f' --flexible {args.flexible}'
 
-    cmd = ' \\\n  '.join(['ligand-docking', str(ligand), str(args.receptor), str(args.field),
-                          f'--outdir {outdir / "docking"}',
-                          f'--batch_size {args.batch_size}', utility.cmd_options(dd)])
-    
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, gpu=args.gpu,
-                                          log=log, name='ligand-docking', day=10, hour=0, hold=args.hold)
+    p = cmder.run(cmd, debug=args.verbose)
+    if p.returncode:
+        utility.error_and_exit('Failed to run docking', task=args.task, status=-80)
 
 
 @task(inputs=molecule_docking, outputs=['top.pose.sdf'])
 def top_pose(inputs, outputs):
-    global DEPENDENCY
-    dd = {k: v for k, v in vars(args).items() if k in ('cpu', 'task', 'quiet', 'verbose')}
-    cmd = ' \\\n  '.join(['top-pose', str(outdir / inputs),  f'--top {args.top_percent}',
-                          f'--output {outdir / outputs}', utility.cmd_options(dd)])
-    
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
-                                          name='top-pose', day=0, hour=16, hold=args.hold)
+    cmd = f'top-pose {inputs} --top {args.top_percent} --task {args.task}'
+    p = cmder.run(cmd, debug=args.verbose)
+    if p.returncode:
+        utility.error_and_exit('Get top poses failed', task=args.task, status=-95)
 
 
 @task(inputs=top_pose, outputs=['cluster.pose.sdf'])
 def cluster_pose(inputs, outputs):
-    global DEPENDENCY
-    dd = {k: v for k, v in vars(args).items() if k in ('cpu', 'method', 'bits', 'quiet', 'verbose', 'task')}
-    cmd = ' \\\n  '.join(['cluster-pose', f'{outdir / inputs}', f'--output {outdir / outputs}',
-                          f'--clusters {args.num_clusters}', utility.cmd_options(dd)])
-    
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
-                                          name='cluster-pose', day=0, hour=16, hold=args.hold)
+    cmd = f'cluster-pose {inputs} --clusters {args.num_clusters} --cpu {args.cpu} --task {args.task}'
+    p = cmder.run(cmd, debug=args.verbose)
+    if p.returncode:
+        utility.error_and_exit('Clustering poses failed', task=args.task, status=-105)
 
 
 @task(inputs=cluster_pose, outputs=['interaction.pose.sdf'])
 def interaction_pose(inputs, outputs):
-    global DEPENDENCY
-    cmd = (f'interaction-pose {inputs} {args.pdb} --output {outputs} --schrodinger {args.schrodinger} '
-           f'--task {args.task} --wd {outdir}')
+    cmd = f'interaction-pose {inputs} {args.pdb} --schrodinger {args.schrodinger} --task {args.task}'
     if args.residue:
         cmd += f' --residue_number {" ".join(x for x in args.residume)}'
-    if args.quiet:
-        cmd += ' --quiet'
-    if args.verbose:
-        cmd += ' --verbose'
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu, log=log,
-                                          name='interaction-pose', day=0, hour=16, hold=args.hold)
+    p = cmder.run(cmd, debug=args.verbose)
+    if p.returncode:
+        utility.error_and_exit('Filtering interact poses failed', task=args.task, status=-115)
 
 
 @task(inputs=interaction_pose, outputs=['md/RMSD.csv'])
 def molecule_dynamics(inputs, outputs):
-    global DEPENDENCY
     cmd = (f'molecule-dynamics {inputs} {args.pdb} --outdir {outdir / "md"} --openmm_simulate {args.openmm_simulate} '
-           f' --cpu {args.gpu*2} --gpu {args.gpu} --task {args.task} --wd {outdir}')
+           f' --cpu {args.gpu*2} --gpu {args.gpu} --task {args.task}')
     if args.residue:
         cmd += f' --time {args.md_time}'
     else:
         cmd += f' --short 5 --time {args.md_time}'
-    if args.quiet:
-        cmd += ' --quiet'
-    if args.verbose:
-        cmd += ' --verbose'
-    _, DEPENDENCY = utility.run_or_submit(cmd, dependency=DEPENDENCY, venv=venv, cpu=args.cpu,
-                                          gpu=args.gpu, log=log, name='molecule-dynamics', day=21, hold=args.hold)
+    p = cmder.run(cmd, debug=args.verbose)
+    if p.returncode:
+        if args.residue:
+            utility.error_and_exit('Long time MD failed', task=args.task, status=-135)
+        else:
+            utility.error_and_exit('Short time MD failed', task=args.task, status=-125)
 
 
 def main():

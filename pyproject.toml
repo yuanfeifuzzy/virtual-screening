@@ -32,6 +32,7 @@ dependencies = [
 ligand-preparation = "svs.ligand_preparation:main"
 receptor-preparation = "svs.receptor_preparation:main"
 ligand-docking = "svs.ligand_docking:main"
+unidock = "svs.unidocking:main"
 virtual-screening = "svs.virtual_screening:main"
 top-pose = "svs.top_pose:main"
 cluster-pose = "svs.cluster_pose:main"

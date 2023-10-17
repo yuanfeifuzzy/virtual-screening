@@ -10,7 +10,7 @@ from rdkit import Chem
 class SDF:
     def __init__(self, s, deep=False):
         self.s = s
-        self.title, self.mol, self.properties, self.properties_dict = self._parse(s, deep=deep)
+        self.title, self.mol, self.properties, self.properties_dict = self.parse(s, deep=deep)
 
     @staticmethod
     def parse(s, deep=False):
@@ -43,11 +43,11 @@ class SDF:
             title, mol, properties, properties_dict = '', '', '', {}
         return title, mol, properties, properties_dict
 
-    def sdf(self, output=None, properties=False):
+    def sdf(self, output=None, properties=False, title=''):
         if properties:
-            s = f'{self.title}\n{self.mol}\n{self.properties}\n$$$$\n'
+            s = f'{title or self.title}\n{self.mol}\n{self.properties}\n$$$$\n'
         else:
-            s = f'{self.title}\n{self.mol}\n$$$$\n'
+            s = f'{title or self.title}\n{self.mol}\n$$$$\n'
         if output:
             with open(output, 'w') as o:
                 o.write(s)
@@ -59,9 +59,9 @@ class SDF:
 
 def parse(sdf, string=False, deep=False):
     opener = gzip.open if str(sdf).endswith('.gz') else open
-    with opener(sdf) as f:
+    with opener(sdf, 'rt') as f:
         lines = []
-        for line in f:
+        for i, line in enumerate(f):
             lines.append(line)
             if line.strip() == '$$$$':
                 yield ''.join(lines) if string else SDF(''.join(lines), deep=deep)

@@ -25,10 +25,13 @@ from loguru import logger
 from seqflow import task, Flow
 from pandarallel import pandarallel
 
+from svs import sdf_io
+
 parser = argparse.ArgumentParser(prog='ligand-docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands")
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file")
 parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor in .pdbqt format file")
+parser.add_argument('-y', '--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
 parser.add_argument('-c', '--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
 
@@ -51,6 +54,7 @@ parser.add_argument('-v', '--verbose', help='Process data verbosely with debug a
 
 parser.add_argument('--wd', help="Path to work directory", default='.')
 parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
+
 parser.add_argument('--submit', action='store_true', help="Submit job to job queue instead of directly running it")
 parser.add_argument('--hold', action='store_true',
                     help="Hold the submission without actually submit the job to the queue")
@@ -64,14 +68,14 @@ args = parser.parse_args()
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
 
 OUTDIR = Path(args.outdir)
-POSE, SCORE = OUTDIR / 'docking.pose.sdf.gz', OUTDIR / 'docking.scores.parquet'
+POSE, SCORE = OUTDIR / 'docking.poses.sdf.gz', OUTDIR / 'docking.scores.parquet'
 if POSE.exists() and SCORE.exists():
     utility.debug_and_exit('Docking results already exist, skip re-docking', task=args.task, status=80)
 
 utility.submit_or_skip(parser.prog, args,
-                       ['ligand', 'receptor', 'field'],
-                       ['flexible', 'filter', 'size', 'center', 'quiet', 'verbose', 'outdir', 'cpu',
-                        'gpu', 'autodock', 'unidock', 'gnina', 'task', 'wd'])
+                       ['ligand', 'receptor'],
+                       ['flexible', 'filter', 'size', 'center', 'outdir', 'scratch', 'cpu', 'gpu', 'exe',
+                        'quiet', 'verbose', 'task', 'wd'])
 
 
 OUTDIR = utility.make_directory(args.outdir)
@@ -101,255 +105,174 @@ GPU_QUEUE = utility.gpu_queue(n=args.gpu, task=args.task, status=-4)
 pandarallel.initialize(nb_workers=CPUS, progress_bar=False, verbose=0)
 
 job_id = os.environ.get('SLURM_JOB_ID', 0)
-utility.task_update(args.task, 70)
-
-LIGANDS = list(LIGAND.glob('*.sdf')) + list(LIGAND.glob('*.sdf.gz'))
-if args.debug:
-    LIGANDS = LIGANDS[:4]
+utility.task_update(task=args.task, status=70)
 
 
-def filtering(mol, filters=None):
+def sdf_to_ligand_list(sdf):
+    logger.debug(f'Processing ligands in {sdf} ...')
+    name = sdf.name.removesuffix('.sdf.gz').removesuffix('.sdf')
+    outdir = SCRATCH / name
+    outdir.mkdir(exist_ok=True)
+
+    ligands, outputs, n = [], [], 0
+    number = 100 if args.debug else 10000
+    for i, ligand in enumerate(sdf_io.parse(sdf), 1):
+        output = f'{outdir}/{ligand.title}.sdf'
+        ligand.sdf(output=output)
+        ligands.append(output)
+        if i % number == 0:
+            n += 1
+
+            output = SCRATCH / f'{name}.{n:06d}.txt'
+            with output.open('w') as o:
+                o.write('\n'.join(ligands))
+            outputs.append(output)
+
+            ligands = []
+            if args.debug and n == 9:
+                break
+
+    logger.debug(f'Successfully processed ligands in {sdf} into {n:,} file lists')
+    return outputs
+
+
+def filtering(sdf, filters):
+    try:
+        mol = next(Chem.SDMolSupplier(sdf, removeHs=False))
+    except Exception as e:
+        logger.error(f'Failed to read {sdf} deu to \n{e}\n\n{traceback.format_exc()}')
+        return
+
+    mw = Descriptors.MolWt(mol)
+    if mw == 0 or mw < filters['min_mw'] or mw >= filters['max_mw']:
+        return
+
+    hba = Descriptors.NOCount(mol)
+    if hba > filters['hba']:
+        return
+
+    hbd = Descriptors.NHOHCount(mol)
+    if hbd > filters['hbd']:
+        return
+
+    logP = Descriptors.MolLogP(mol)
+    if logP < filters['min_logP'] or logP > filters['max_logP']:
+        return
+
+    # https://www.rdkit.org/docs/GettingStartedInPython.html#lipinski-rule-of-5
+    lipinski_violation = sum([mw <= 500, hba <= 10, hbd <= 5, logP <= 5])
+    if lipinski_violation < 3:
+        return
+
+    ds = Descriptors.CalcMolDescriptors(mol)
+    num_chiral_center = len(Chem.FindMolChiralCenters(mol, includeUnassigned=True, useLegacyImplementation=True))
+    if num_chiral_center > filters["chiral_center"]:
+        return
+
+    if ds.get('NumRotatableBonds', 0) > filters['rotatable_bound_number']:
+        return
+
+    if ds.get('TPSA', 0) > filters['tpsa']:
+        return
+
+    if ds.get('qed', 0) > filters['qed']:
+        return
+
+    return sdf
+
+
+def filter_ligands(txt, filters=None):
+    output = Path(txt).with_suffix('.filter.txt')
     if filters:
-        mw = Descriptors.MolWt(mol)
-        if mw == 0 or mw < filters['min_mw'] or mw >= filters['max_mw']:
-            return
+        if output.exists():
+            logger.debug(f'Filtered ligands already exist in {output}, skip re-filtering')
+        else:
+            if isinstance(filters, (str, Path)):
+                with open(filters) as f:
+                    filters = json.load(f)
 
-        hba = Descriptors.NOCount(mol)
-        if hba > filters['hba']:
-            return
-
-        hbd = Descriptors.NHOHCount(mol)
-        if hbd > filters['hbd']:
-            return
-
-        logP = Descriptors.MolLogP(mol)
-        if logP < filters['min_logP'] or logP > filters['max_logP']:
-            return
-
-        # https://www.rdkit.org/docs/GettingStartedInPython.html#lipinski-rule-of-5
-        lipinski_violation = sum([mw <= 500, hba <= 10, hbd <= 5, logP <= 5])
-        if lipinski_violation < 3:
-            return
-
-        ds = Descriptors.CalcMolDescriptors(m)
-        num_chiral_center = len(Chem.FindMolChiralCenters(m, includeUnassigned=True, useLegacyImplementation=True))
-        if num_chiral_center > filters["chiral_center"]:
-            return
-
-        if ds.get('NumRotatableBonds', 0) > filters['rotatable_bound_number']:
-            return
-
-        if ds.get('TPSA', 0) > filters['tpsa']:
-            return
-
-        if ds.get('qed', 0) > filters['qed']:
-            return
-
-    return mol
-
-
-def sdf_writer(mol, outdir):
-    output = str(outdir / f"{mol.GetProp('_Name')}.sdf")
-    with Chem.SDWriter(output) as o:
-        o.write(mol)
+            logger.debug(f'Filtering ligands in {txt}')
+            with open(txt) as f:
+                outs = [filtering(line.strip(), filters) for line in f]
+                outs = [out for out in outs if out]
+                if outs:
+                    with output.open('w') as o:
+                        o.writelines(f'{out}\n' for out in outs)
+                    logger.debug(f'Successfully saved {len(outs):,} ligands passed filters to {output}')
+                else:
+                    logger.debug(f'No ligands passed filters were saved to {output}')
+                    return None
+    else:
+        with open(txt) as f, output.open('w') as o:
+            o.writelines(line for line in f)
+        logger.debug(f'No filters were provided, copy ligands in {txt} to {output}')
     return output
 
 
-class SDF:
-    def __init__(self, ss, deep=False):
-        self.s = ss
-        self.title, self.mol, self.properties, self.properties_dict = self._parse(ss, deep=deep)
-
-    @staticmethod
-    def _parse(s, deep=False):
-        if s:
-            lines = s.splitlines(keepends=True)
-            title = lines[0].rstrip()
-
-            mol, i = [], 0
-            for i, line in enumerate(lines[1:]):
-                mol.append(line)
-                if line.strip() == 'M  END':
-                    break
-            mol = ''.join(mol)
-
-            properties = lines[i + 2:]
-
-            properties_dict, idx = {}, []
-            if deep:
-                for i, p in enumerate(properties):
-                    if p.startswith('>'):
-                        properties_dict[p.split(maxsplit=1)[1].rstrip()] = ''
-                        idx.append(i)
-                idx.append(-1)
-
-                for i, k in enumerate(properties_dict.keys()):
-                    properties_dict[k] = ''.join(properties[idx[i] + 1:idx[i + 1]])
-
-            properties = ''.join(properties[:-1])
-        else:
-            title, mol, properties, properties_dict = '', '', '', {}
-        return title, mol, properties, properties_dict
-
-    def no_properties(self, output=None):
-        s = f'{self.title}\n{self.mol}\n$$$$\n'
-        if output:
-            with open(output, 'w') as o:
-                o.write(s)
-        return s
-
-    def __str__(self):
-        return self.s
-
-
-def sdf_parser(sdf, string=False, deep=False):
-    opener = gzip.open if str(sdf).endswith('.gz') else open
-    with opener(sdf) as f:
-        lines = []
-        for line in f:
-            lines.append(line)
-            if line.strip() == '$$$$':
-                yield ''.join(lines) if string else SDF(''.join(lines), deep=deep)
-                lines = []
-                continue
-        yield ''.join(lines) if string else SDF(''.join(lines), deep=deep)
-
-
-def best_unidock_pose_and_score(sdf):
-    ss = []
-    for s in sdf_parser(sdf, deep=True):
-        if s.properties_dict:
-            try:
-                score = s.properties_dict.get('<Uni-Dock RESULT>', '').splitlines()[0]
-                score = float(score.split('=')[1].strip().split()[0])
-            except ValueError as e:
-                logger.error(f'Failed to get score from {sdf} due to {e}')
-                score = np.nan
-            ss.append((s.no_properties(), score))
-
-    s, score = sorted(ss, key=lambda x: x[1])[0] if ss else ['', np.nan]
-    return s, score
-
-
-def get_size_center(fld):
-    size, center = (0, 0, 0), (0, 0, 0)
-    with open(fld) as f:
-        for line in f:
-            if line.startswith('#NELEMENTS'):
-                try:
-                    size = [int(x) for x in line.strip().split()[1:]]
-                except ValueError:
-                    logger.error(f'Failed to get size coordinates from {fld}, size was set to {size}')
-            if line.startswith('#CENTER'):
-                try:
-                    center = [float(x) for x in line.strip().split()[1:]]
-                except ValueError:
-                    logger.error(f'Failed to get center coordinates from {fld}, center was set to {center}')
-    return size, center
-
-
-def get_receptor(field, rigid, flexible='', size=None, center=None):
-    if not size or not center:
-        size, center = get_size_center(field)
-
-    receptor = {'field': field, 'rigid': rigid, 'flexible': flexible, 'size': size, 'center': center}
-    return receptor
-
-
-def unidock(batch, receptor=None, outdir=None, exe='', verbose=False):
+def unidock(batch, receptor=None, exe='', verbose=False):
+    logger.debug(f'Docking ligands in {batch} ...')
     gpu_id, log = GPU_QUEUE.get(), Path(batch).with_suffix(".log").name
-    (cx, cy, cz), (sx, sy, sz) = receptor['center'], receptor['size']
-    cmd = (f'{exe} --receptor {receptor["rigid"]} '
+    (cx, cy, cz), (sx, sy, sz) = args.center, args.size
+    cmd = (f'{exe} --receptor {receptor} '
            f'--ligand_index {batch} --devnum {gpu_id} --search_mode balance --scoring vina '
            f'--center_x {cx} --center_y {cy} --center_z {cz} --size_x {sx} --size_y {sy} --size_z {sz} '
-           f'--dir {outdir.name} &> {log}')
+           f'--dir {batch.parent} &> {log}')
 
     try:
-        p = cmder.run(cmd, cwd=str(outdir.parent), log_cmd=verbose)
+        p = cmder.run(cmd, log_cmd=verbose)
         if p.returncode:
             utility.error_and_exit(f'Docking ligands in {batch} failed', task=args.task, status=-80)
+        logger.debug(f'Docking ligands in {batch} complete.')
     finally:
         GPU_QUEUE.put(gpu_id)
 
 
-@task(inputs=LIGANDS, outputs=lambda i: f"{i.name.removesuffix('.sdf.gz').removesuffix('.sdf')}.txt", cpus=CPUS)
-def get_ligand_list(inputs, outputs):
-    logger.debug(f'Processing ligands in {inputs}')
-    sdf_outdir = SCRATCH / outputs.removesuffix('.txt')
-    sdf_outdir.mkdir(exist_ok=True)
+def best_pose_and_score(sdf):
+    ss = []
+    for s in sdf_io.parse(sdf, deep=True):
+        if s.properties_dict:
+            try:
+                score = s.properties_dict.get('<Uni-Dock RESULT>', '').splitlines()[0]
+                score = float(score.split('=')[1].strip().split()[0])
+                title = f'{s.title}_{score}'
+            except ValueError as e:
+                logger.error(f'Failed to get score from {sdf} due to {e}')
+                score = np.nan
+                title = ''
+            ss.append((s.sdf(title=title), s.title, score))
 
-    if args.filter:
-        with open(args.filter) as f:
-            filters = json.load(f)
-    else:
-        filters = None
-
-    opener = gzip.open if inputs.name.endswith('.gz') else open
-    with opener(inputs) as f, open(outputs, 'w') as o:
-        mols = (filtering(mol, filters=filters) for mol in Chem.ForwardSDMolSupplier(f, removeHs=False))
-        if args.debug:
-            for i, mol in enumerate(mols):
-                o.write(f'{sdf_writer(mol, sdf_outdir)}\n')
-                if i == 100:
-                    break
-        else:
-            o.writelines(f'{sdf_writer(mol, sdf_outdir)}\n' for mol in mols)
-    logger.debug(f'Successfully processed ligands in {inputs}')
+    s, title, score = sorted(ss, key=lambda x: x[1])[0] if ss else ['', np.nan]
+    return s, title, score
 
 
-@task(inputs=get_ligand_list, outputs=lambda i: f"{i.removesuffix('.txt')}.score.parquet", cpus=GPU_QUEUE.qsize())
-def docking(inputs, outputs):
-    receptor = get_receptor(FIELD, RECEPTOR, flexible=args.flexible, size=args.size, center=args.center)
-    outdir = Path(inputs.removesuffix('.txt'))
-    outdir.mkdir(exist_ok=True)
+def docking():
+    ligands = sdf_to_ligand_list(LIGAND)
+    libraries = utility.parallel_cpu_task(filter_ligands, ligands, filters=args.filter)
+    libraries = [ligand for ligand in libraries if ligand]
 
-    logger.debug(f'Docking ligand in {inputs} using Uni-Dock ...')
-    start = time.time()
-    unidock(inputs, receptor=receptor, outdir=outdir.resolve(), exe=args.unidock, verbose=args.verbose)
-    t = str(timedelta(seconds=time.time() - start))
-    logger.debug(f'Docking ligand in {inputs} using Uni-Dock complete in {t.split(".")[0]}\n')
+    utility.parallel_gpu_task(unidock, libraries, receptor=RECEPTOR, exe=args.exe, verbose=args.verbose)
 
-    logger.debug(f'Parsing docking scores in {outdir}')
-    start = time.time()
-    sdfs, scores = [], []
+    logger.debug(f'Getting best poses and scores ...')
+    ps = utility.parallel_cpu_task(best_pose_and_score, SCRATCH.glob('*_out.sdf'))
+    logger.debug(f'Getting best poses and scores complete.')
 
-    for sdf in outdir.glob('*_out.sdf'):
-        s, score = best_unidock_pose_and_score(sdf)
-        sdfs.append(s)
-        scores.append({'ligand': sdf.name.removesuffix('_out.sdf'), 'score': score})
+    logger.debug(f'Sorting and saving best poses and scores into {OUTDIR} ...')
+    ps = sorted(ps, key=lambda x: x[2])
 
-    df = pd.DataFrame(scores)
-    df = df.dropna()
+    with gzip.open(POSE, 'wt') as o:
+        o.writelines(f'{s[0]}\n' for s in ps)
 
-    if df.empty:
-        logger.warning('Docking score dataframe is empty, no score will be saved. Check docking log to see if '
-                       'docking performed successfully')
-    else:
-        with open(f'{OUTDIR / outputs.removesuffix(".score.parquet")}.pose.sdf', 'w') as o:
-            o.writelines(f'{sdf}\n' for sdf in sdfs if sdf)
-
-        df.to_parquet(outputs, index=False)
-        logger.debug(f'Successfully saved {df.shape[0]:,} docking scores to {outputs}')
-    t = str(timedelta(seconds=time.time() - start))
-    logger.debug(f'Parsing docking scores complete in {t.split(".")[0]}\n')
-
-
-@task(inputs=[], outputs=[SCORE], parent=docking)
-def scoring(inputs, outputs):
-    cmder.run(f'cat *.log > {OUTDIR}/docking.log && rm *.log')
-    cmder.run(f'rm *.txt')
-    df = [pd.read_parquet(x) for x in Path('.').glob('*.score.parquet')]
-    df = pd.concat(df)
+    df = pd.DataFrame((s[1:] for s in ps), columns=['ligand', 'score'])
     df.to_parquet(SCORE, index=False)
-    cmder.run(f'rm *.score.parquet')
-    cmder.run(f'rm -r {SCRATCH}', cwd=str(OUTDIR))
+    logger.debug(f'Sorting and saving best poses and scores into {OUTDIR} complete.')
+
+    cmder.run(f'rm -r {SCRATCH}', msg='Cleaning up ...')
 
 
 def main():
     try:
         start = time.time()
-        flow = Flow('sd', short_description=__doc__.splitlines()[0], description=__doc__)
-        flow.run(dry_run=args.dry, cpus=CPUS)
+        docking()
         t = str(timedelta(seconds=time.time() - start))
         utility.debug_and_exit(f'Docking complete in {t.split(".")[0]}\n', task=args.task, status=80)
     except Exception as e:
