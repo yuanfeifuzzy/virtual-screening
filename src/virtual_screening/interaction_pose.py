@@ -16,41 +16,51 @@ from datetime import timedelta
 import pandas as pd
 import cmder
 import subprocess
-import utility
+import vstool
+import MolIO
 from rdkit import Chem
 from pandarallel import pandarallel
 
+logger = vstool.setup_logger(verbose=True)
 
-logger = utility.setup_logger()
 
-
-def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf',
-                       schrodinger='', quiet=False, verbose=False, task=0):
-    utility.setup_logger(quiet=quiet, verbose=verbose)
+def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf', schrodinger='', task=0,
+                     quiet=False, verbose=False):
+    vstool.setup_logger(verbose=verbose, quiet=quiet)
 
     schrodinger = schrodinger or os.environ.get('SCHRODINGER', '')
     if not schrodinger:
-        utility.error_and_exit('No schrodinger was provided and cannot find SCHRODINGER', task=task, status=-2)
-        
-    receptor = str(Path(pdb).with_suffix('.sdf').name)
-    cmder.run(f'{schrodinger}/utilities/structconvert {pdb} {receptor}', exit_on_error=True)
-    # https://www.schrodinger.com/kb/286 $SCHRODINGER/run pv_convert.py -m combined.mae
-    view = Path(sdf).resolve().parent / 'pose.view.sdf'
-    # https://www.schrodinger.com/kb/1168#:~:text=Yes%2C%20you%20can%20create%20a,both%20compressed%20and%20uncompressed%20files.
-    cmder.run(f'cat {receptor} {sdf} > {view}')
-    options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(residue_number, 1)])
-    
+        vstool.error_and_exit('No schrodinger was provided and cannot find SCHRODINGER', task=task, status=-2)
+
+    receptor = str(Path(pdb).with_suffix('.mae').name)
+    pose = str(Path(sdf).with_suffix('.mae').name)
+    view = Path(sdf).resolve().parent / 'pose.view.mae'
+    out = Path(output).with_suffix('.view.sdf')
     log = Path(output).with_suffix('.log')
-    # RuntimeError: Could not extract atoms from Structure 36 (.mae) / Structure 72 (.sdf)
-    cmder.run(f'{schrodinger}/run pose_filter.py {view} {output} {options} -WAIT -NOJOBID > {log}',
-              fmt_cmd=False, exit_on_error=True)
+
+    try:
+        cmder.run(f'{schrodinger}/utilities/structconvert {pdb} {receptor}', exit_on_error=True)
+        cmder.run(f'{schrodinger}/utilities/structconvert {sdf} {pose}', exit_on_error=True)
+        cmder.run(f'cat {receptor} {pose} > {view}')
+
+        options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(residue_number, 1)])
+        p = cmder.run(f'{schrodinger}/run pose_filter.py {view} {out} {options} -WAIT -NOJOBID > {log}',
+                      fmt_cmd=False, exit_on_error=True, debug=True)
+        if p.returncode == 0:
+            with open(output, 'w') as o:
+                f = MolIO.parse_sdf(out)
+                next(f)
+                for s in f:
+                    o.write(s.sdf(title=f'{s.title}_{s.score}'))
+    finally:
+        cmder.run(f'rm -f {receptor} {pose} {view} {out} {log}', log_cmd=False)
 
 
 def main():
     parser = argparse.ArgumentParser(prog='interaction-pose', description=__doc__.strip())
     parser.add_argument('sdf', help="Path to a SDF file stores docking poses")
     parser.add_argument('pdb', help="Path to a PDB file stores receptor structure")
-    parser.add_argument('-r', '--residue', nargs='?', type=int,
+    parser.add_argument('-r', '--residue', nargs='*', type=int,
                         help="Residue numbers that interact with ligand via hydrogen bond")
     parser.add_argument('-o', '--output', help="Path to a SDF file for saving output poses",
                         default='interaction.pose.sdf')
@@ -67,16 +77,13 @@ def main():
                         help="Hold the submission without actually submit the job to the queue")
 
     args = parser.parse_args()
-    
-    utility.submit_or_skip(parser.prog, args, ['sdf', 'pdb'],
-                           ['residue', 'output', 'schrodinger', 'quiet', 'verbose', 'task'], day=0)
-    
+
     try:
         start = time.time()
         output = Path(args.output) or Path(args.sdf).resolve().parent / 'interaction.pose.sdf'
-        
+
         if output.exists():
-            utility.debug_and_exit(f'Interaction pose already exists, skip re-processing\n', task=args.task, status=115)
+            vstool.debug_and_exit(f'Interaction pose already exists, skip re-processing\n', task=args.task, status=115)
 
         if args.residue:
             interaction_pose(args.sdf, args.pdb, args.residue, output=str(output), schrodinger=args.schrodinger,
@@ -85,11 +92,11 @@ def main():
             logger.debug('No residue was provided, interaction pose filter skipped')
             cmder.run(f'cp {args.sdf} {output}')
         t = str(timedelta(seconds=time.time() - start))
-        utility.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
-                               task=args.task, status=115)
+        vstool.debug_and_exit(f'Filter interaction pose complete in {t.split(".")[0]}\n',
+                              task=args.task, status=115)
     except Exception as e:
-        utility.error_and_exit(f'Filter interaction pose failed due to\n{e}\n\n{traceback.format_exc()}',
-                               task=args.task, status=-115)
+        vstool.error_and_exit(f'Filter interaction pose failed due to\n{e}\n\n{traceback.format_exc()}',
+                              task=args.task, status=-115)
 
 
 if __name__ == '__main__':

@@ -66,7 +66,7 @@ vstool.setup_logger(quiet=args.quiet, verbose=args.verbose)
 setattr(args, 'result', args.outdir / 'docking.sdf')
 setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}', task=args.task))
 setattr(args, 'cpu', 4 if args.debug else vstool.get_available_cpus(args.cpu))
-setattr(args, 'gpu', 2 if args.debug else len(vstool.get_available_gpus(args.gpu, task=args.task)[0]))
+setattr(args, 'gpu', 2 if args.debug else len(vstool.get_available_gpus(args.gpu, task=args.task)))
 
 
 def filtering(sdf, filters):
@@ -276,10 +276,10 @@ def submit():
                f'--exe {args.exe.strip()}', f'--task {args.task}']
 
         if args.flexible:
-            cmd.append('--flexible {args.flexible}')
+            cmd.append(f'--flexible {args.flexible}')
 
         if args.filter:
-            cmd.append('--filter {args.filter}')
+            cmd.append(f'--filter {args.filter}')
 
         if args.verbose:
             cmd.append('--verbose')
