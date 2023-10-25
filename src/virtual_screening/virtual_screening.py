@@ -24,160 +24,126 @@ from rdkit.Chem import Descriptors
 from seqflow import task, Flow, logger
 
 
-METHODS = ('morgan2', 'morgan3', 'ap', 'rdk5')
-
 parser = argparse.ArgumentParser(prog='virtual-screening', description=__doc__.strip())
-parser.add_argument('ligand', help="Path to a single SDF file contains prepared ligands")
-parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file")
-parser.add_argument('field', help="Path to prepared receptor maps filed file in .maps.fld format file")
+parser.add_argument('ligand', help="Path to a directory contains prepared ligands in SDF format",
+                    type=vstool.check_file)
+parser.add_argument('receptor', help="Path to prepared rigid receptor in PDBQT format file", type=vstool.check_file)
+parser.add_argument('--pdb', help="Path to prepared receptor structure in PDB format")
+parser.add_argument('--flexible', help="Path to prepared flexible receptor file in PDBQT format")
+parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
+parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
+parser.add_argument('--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
 
-parser.add_argument('-p', '--pdb', help="Path to receptor structure in .pdbqt format file")
-parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor in .pdbqt format file")
-parser.add_argument('--filter', help="Path to a JSON file contains ligand filters")
-parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
-parser.add_argument('-c', '--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
+parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
+parser.add_argument('--docker', help="Path to docking program executable", type=vstool.check_exe)
 
-parser.add_argument('--cpu', type=int, default=32,
+parser.add_argument('--scratch', help="Path to the scratch directory, default: %(default)s",
+                    default=Path(os.environ.get('SCRATCH', '/scratch')))
+parser.add_argument('--cpu', type=int, default=0,
                     help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
-parser.add_argument('--gpu', type=int, default=4,
-                    help="Maximum number of GPUs can be used for docking, default: %(default)s")
+parser.add_argument('--gpu', type=int, default=0,
+                    help="Maximum number of GPUs can be used for parallel processing, default: %(default)s")
 
-parser.add_argument('-o', '--outdir', default='.', type=str,
-                    help="Path to a directory for saving output files, default: %(default)s")
-parser.add_argument('--scratch', default='/scratch', type=str,
-                    help="Path to the scratch directory, default: %(default)s")
+parser.add_argument('--batch', type=int, help="Number of batches that the docking job will be split to, "
+                                              "default: %(default)s", default=8)
+parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
 
-parser.add_argument('--autodock', help="Path to AutoDock-GPU executable")
-parser.add_argument('--unidock', help="Path to AutoDock-GPU executable")
-parser.add_argument('--gnina', help="Path to AutoDock-GPU executable")
-
-parser.add_argument('-t', '--top_percent', help="Percent of top poses need to be retained for "
+parser.add_argument('--residue', nargs='*', type=int,
+                        help="Residue numbers that interact with ligand via hydrogen bond")
+parser.add_argument('--top', help="Percentage of top poses need to be retained for "
                                                 "downstream analysis, default: %(default)s", type=float, default=10)
-parser.add_argument('-g', '--num_clusters', help="Number of clusters for clustering top poses, "
+parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
                                                 "default: %(default)s", type=int, default=1000)
 parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
-                    default=METHODS[-1], choices=METHODS)
+                    default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
-parser.add_argument('-m', '--md_time', help="Time (in nanosecond) needs for molecule dynamics simulation, "
-                                                "default: %(default)s", type=float, default=50)
-parser.add_argument('-r', '--residue', nargs='?', type=int,
-                        help="Residue numbers that interact with ligand via hydrogen bond")
-parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory')
+parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory', type=vstool.check_dir)
+
+parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 parser.add_argument('--openmm_simulate', help='Path to openmm_simulate executable')
 
-parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message',
-                    action='store_true')
-parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message',
-                    action='store_true')
+parser.add_argument('--partition', help='Name of the queue, default: %(default)s', default='normal')
+parser.add_argument('--email', help='Email address for send status change emails')
+parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
+                    default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
 
-parser.add_argument('--wd', help="Path to work directory", default='.')
-parser.add_argument('--task', type=int, help="An ID associated with the task", default=0)
-
-parser.add_argument('--submit', action='store_true', help="Submit job to job queue instead of directly running it")
-parser.add_argument('--hold', action='store_true', help="Hold the submission without actually submit the job to the queue")
-parser.add_argument('--dry', help='Only print out tasks and commands without actually running them.',
-                    action='store_true')
+parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
+parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
+vstool.setup_logger(quiet=args.quiet, verbose=args.verbose)
 
+setattr(args, 'result', args.outdir / 'md.rmsd.csv')
+setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}', task=args.task))
+setattr(args, 'cpu', 4 if args.debug else args.cpu)
+setattr(args, 'gpu', 2 if args.debug else args.gpu)
+setattr(args, 'batch', 2 if args.debug else args.batch)
+
+args = parser.parse_args()
 utility.setup_logger(quiet=args.quiet, verbose=args.verbose)
-log = f'{parser.prog}.log'
 
-utility.submit_or_skip(parser.prog, args,
-                       ['ligand', 'receptor', 'field'],
-                       ['pdb', 'flexible', 'filter', 'size', 'center', 'cpu', 'gpu',
-                        'outdir', 'scratch', 'autodock', 'unidock', 'gnina',
-                        'top_percent', 'num_clusters', 'method', 'bits', 'md_time', 'residue',
-                        'schrodinger', 'openmm_simulate',
-                        'quiet', 'verbose', 'wd', 'task'],
-                       day=21, log=log)
+if args.result.exists():
+    vstool.debug_and_exit(f'Virtual screening result {args.result} already exists, skip re-processing', 
+                          task=args.task, status=140)
 
-outdir = utility.make_directory(args.outdir, task=args.task, status=-1)
-os.chdir(outdir)
+env = (f'source {args.bin}/activate\n\n'
+       f'cd {args.outdir} || {{ echo "Failed to cd into {args.outdir}!"; exit 1; }}\n')
 
-ligand = utility.check_file(args.ligand, f'The provide ligand {args.ligand} does not exist or not a file',
-                            task=args.task, status=-1)
-receptor = utility.check_file(args.receptor, 
-                              f'The provide receptor {args.receptor} does not exist or not a file', 
-                              task=args.task, status=-1)
-field = utility.check_file(args.field, f'The provide field {args.field} does not exist or not a file', 
-                           task=args.task, status=-1)
-activate = utility.check_executable(parser.prog, task=args.task, status=-2).strip().removesuffix('virtual-screening')
-venv = f'source {activate}activate\ncd {outdir} || exit 1'
+cmd = ' \\\n  '.join(['batch-ligand', args.ligand, f'--outdir {args.outdir}', f'--batch {args.batch}',
+                      f'--task {args.task}'])
+code, job_id = vstool.submit(env + cmd,
+                             cpus_per_task=1, job_name='batch.ligand', hour=0, minute=30,
+                             partition=args.partition, email=args.email, mail_type=args.email_type,
+                             log='%x.%j.log', script='batch.ligand.sh', hold=args.hold)
+if not job_id:
+    vstool.error_and_eixt('Failed to submit batch ligand job, cannot continue', ta=args.task, status=-5)
 
+cmd = ['docking',
+       str(args.outdir / 'batch."${{SLURM_ARRAY_TASK_ID}}".sdf'),
+       str(args.receptor),
+       f'--size {args.size[0]} {args.size[1]} {args.size[2]}',
+       f'--center {args.center[0]} {args.center[1]} {args.center[2]}',
+       f'--cpu {args.cpu}', f'--gpu {args.gpu}',
+       f'--scratch {args.scratch}', f'--exe {args.dcoker.strip()}', f'--task {args.task}']
+if args.flexible:
+    cmd.append(f'--flexible {args.flexible}')
 
-@task(inputs=[str(ligand)], outputs=['docking.scores.parquet'])
-def molecule_docking(inputs, outputs):
-    (sx, sy, sz), (cx, cy, cz) = args.size, args.center
-    cmd = (f'unidock {ligand} {receptor} '
-           f'--size {sx} {sy} {sz} --center {cx} {cy} {cz} '
-           f'--outdir {outdir} --scratch {args.scratch} '
-           f'--cpu {args.cpu} --gpu {args.gpu} '
-           f'--exe {args.unidock} --task {args.task} --verbose')
-    if args.filter:
-        cmd += f' --filter {args.filter}'
-    if args.flexible:
-        cmd += f' --flexible {args.flexible}'
+if args.filter:
+    cmd.append(f'--filter {args.filter}')
 
-    p = cmder.run(cmd, debug=args.verbose)
-    if p.returncode:
-        utility.error_and_exit('Failed to run docking', task=args.task, status=-80)
+if args.debug:
+    cmd.append('--debug')
 
+code, job_id = vstool.submit(env + ' \\\n  '.join(cmd),
+                             cpus_per_task=args.cpu, gpus_per_task=args.gpu,
+                             job_name='docking', day=1, hour=12, array=f'1-{args.batch}',
+                             partition=args.partition, email=args.email, mail_type=args.email_type,
+                             log='%x.%j.%A.%a.log', script='docking.sh', dependency=f'afterok:{job_id}')
 
-@task(inputs=molecule_docking, outputs=['top.pose.sdf'])
-def top_pose(inputs, outputs):
-    cmd = f'top-pose {inputs} --top {args.top_percent} --task {args.task}'
-    p = cmder.run(cmd, debug=args.verbose)
-    if p.returncode:
-        utility.error_and_exit('Get top poses failed', task=args.task, status=-95)
+if not job_id:
+    vstool.error_and_eixt('Failed to submit docking job, cannot continue', ta=args.task, status=-5)
 
+cmd = ['post-docking', str(args.sdf), str(args.pdb), f'--top {args.top}', f'--clusters {args.clusters} ',
+       f'--method {args.method}', f'--bits {args.bits} ', f'--cpu {args.cpu}', f'--task {args.task}',
+       f'--schrodinger {args.schrodinger}']
+if args.residue:
+    cmd.append(f'--residue {" ".join(str(x) for x in args.residue)}')
 
-@task(inputs=top_pose, outputs=['cluster.pose.sdf'])
-def cluster_pose(inputs, outputs):
-    cmd = f'cluster-pose {inputs} --clusters {args.num_clusters} --cpu {args.cpu} --task {args.task}'
-    p = cmder.run(cmd, debug=args.verbose)
-    if p.returncode:
-        utility.error_and_exit('Clustering poses failed', task=args.task, status=-105)
+code, job_id = vstool.submit(env + ' \\\n  '.join(cmd), cpus_per_task=args.cpu, job_name='post.docking',
+                             day=0, hour=12, partition=args.partition, email=args.email,
+                             mail_type=args.email_type, log='%x.%j.log', script='post.docking.sh',
+                             dependency=f'afterok:{job_id}')
 
+if not job_id:
+    vstool.error_and_eixt('Failed to submit post docking analysis job, cannot continue', ta=args.task,
+                          status=-5)
 
-@task(inputs=cluster_pose, outputs=['interaction.pose.sdf'])
-def interaction_pose(inputs, outputs):
-    cmd = f'interaction-pose {inputs} {args.pdb} --schrodinger {args.schrodinger} --task {args.task}'
-    if args.residue:
-        cmd += f' --residue_number {" ".join(x for x in args.residume)}'
-    p = cmder.run(cmd, debug=args.verbose)
-    if p.returncode:
-        utility.error_and_exit('Filtering interact poses failed', task=args.task, status=-115)
+cmd = ['molecule-dynamics', str(args.sdf), str(args.pdb), f'--outdir {args.outdir}', f'--time {args.time} ',
+       f'--cpu {args.cpu}', f'--gpu {args.gpu}', f'--task {args.task}',
+       f'--openmm_simulate {args.openmm_simulate}']
 
-
-@task(inputs=interaction_pose, outputs=['md/RMSD.csv'])
-def molecule_dynamics(inputs, outputs):
-    cmd = (f'molecule-dynamics {inputs} {args.pdb} --outdir {outdir / "md"} --openmm_simulate {args.openmm_simulate} '
-           f' --cpu {args.gpu*2} --gpu {args.gpu} --task {args.task}')
-    if args.residue:
-        cmd += f' --time {args.md_time}'
-    else:
-        cmd += f' --short 5 --time {args.md_time}'
-    p = cmder.run(cmd, debug=args.verbose)
-    if p.returncode:
-        if args.residue:
-            utility.error_and_exit('Long time MD failed', task=args.task, status=-135)
-        else:
-            utility.error_and_exit('Short time MD failed', task=args.task, status=-125)
-
-
-def main():
-    try:
-        start = time.time()
-        flow = Flow('virtual-screening', short_description=__doc__.splitlines()[0], description=__doc__)
-        flow.run(dry_run=args.dry, cpus=args.cpu)
-        t = str(timedelta(seconds=time.time() - start))
-        utility.debug_and_exit(f'Virtual screening complete in {t.split(".")[0]}\n',
-                               task=args.task, status=140)
-    except Exception as e:
-        utility.error_and_exit(f'Virtual screening failed due to\n{e}\n\n{traceback.format_exc()}\n',
-                               task=args.task, status=-20)
-
-
-if __name__ == '__main__':
-    main()
+vstool.submit(env + ' \\\n  '.join(cmd),
+              cpus_per_task=args.cpu,
+              gpus_per_task=args.gpu, job_name='md', day=2, hour=0, array=f'1-{args.batch}',
+              partition=args.partition, email=args.email, mail_type=args.email_type, log='%x.%j.%A.%a.log',
+              script='md.sh', dependency=f'afterok:{job_id}')
