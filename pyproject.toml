@@ -3,15 +3,15 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "svs"
+name = "virtual_screening"
 version = "0.0.1"
 authors = [
     {name="FEI YUAN", email="fei.yuan@bcm.edu"},
     {name="Chong Lu", email="chong.lu@bcm.edu"},
 ]
-description = "svs - smart virtual screening, a pipeline makes virtual easily to perform"
+description = "vs - virtual screening, a pipeline makes virtual screening easily to perform"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = {text = 'MIT'}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -22,19 +22,17 @@ dependencies = [
     'cmder',
     'loguru',
     'rdkit',
-    'meeko',
     'numpy',
     'scipy',
-    'pandas'
+    'pandas',
+    'scikit-learn'
 ]
 
 [project.scripts]
-ligand-preparation = "svs.ligand_preparation:main"
-receptor-preparation = "svs.receptor_preparation:main"
-ligand-docking = "svs.ligand_docking:main"
-unidock = "svs.unidocking:main"
-virtual-screening = "svs.virtual_screening:main"
-top-pose = "svs.top_pose:main"
-cluster-pose = "svs.cluster_pose:main"
-interaction-pose = "svs.interaction_pose:main"
-molecule-dynamics = "svs.molecule_dynamics:main"
+batch-ligand = "virtual_screening.batch_ligand:main"
+cluster-pose = "virtual_screening.cluster_pose:main"
+docking = "virtual_screening.docking:main"
+interaction-pose = "virtual_screening.interaction_pose:main"
+molecule-dynamics = "virtual_screening.molecule_dynamics:main"
+post-docking = "virtual_screening.post_docking:main"
+virtual-screening = "virtual_screening.virtual_screening:main"

@@ -19,7 +19,7 @@ from loguru import logger
 from seqflow import Flow, task
 
 parser = argparse.ArgumentParser(prog='post-docking', description=__doc__.strip())
-parser.add_argument('sdf', help="Path to a SDF file contains docking poses", type=vstool.check_file)
+parser.add_argument('sdf', help="Path to a SDF file contains docking poses")
 parser.add_argument('pdb', help="Path to a PDB file contains receptor structure", type=vstool.check_file)
 
 parser.add_argument('-r', '--residue', nargs='*', type=int,
@@ -129,7 +129,7 @@ def main():
         if args.submit or args.hold or args.dependency:
             submit()
         else:
-            sdf = interaction_pose(args.sdf)
+            sdf = interaction_pose(vstool.check_file(args.sdf, task=args.task))
             if sdf:
                 cluster_pose(sdf)
 

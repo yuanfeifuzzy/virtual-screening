@@ -55,7 +55,7 @@ def main():
         submit()
     else:
         outputs = [args.outdir / f'batch.{i+1}.sdf' for i in range(args.batch)]
-        if outputs and all(output.exist() for output in outputs):
+        if outputs and all(output.exists() for output in outputs):
             logger.debug(f'Ligand batches already exist, skip re-generating')
         else:
             MolIO.batch_sdf(args.ligand, args.batch, args.outdir / 'batch.')

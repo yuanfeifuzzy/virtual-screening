@@ -24,7 +24,7 @@ from rdkit import Chem
 logger = vstool.setup_logger()
 
 parser = argparse.ArgumentParser(prog='molecule-dynamics', description=__doc__.strip())
-parser.add_argument('sdf', help="Path to a SDF file contains best docking pose for each cluster", type=vstool.check_file)
+parser.add_argument('sdf', help="Path to a SDF file contains best docking pose for each cluster")
 parser.add_argument('pdb', help="Path to a PDF file contains the structure for the docking target", type=vstool.check_file)
 parser.add_argument('-o', '--outdir', default='.', type=vstool.mkdir,
                     help="Path to a directory for saving output files, default: %(default)s")
@@ -136,6 +136,7 @@ def main():
         if args.submit or args.hold or args.dependency:
             submit()
         else:
+            setattr(args, 'sdf', vstool.check_file(args.sdf, task=args.task))
             lists = pose_list()
             vstool.parallel_cpu_task(md, lists, processes=len(lists))
 
