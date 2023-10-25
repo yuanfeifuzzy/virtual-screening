@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-A command line tool for easy ligand-protein docking with variety docking software
+A command line tool for easily perform ligand-protein docking with variety docking software
 """
 
 import json
@@ -18,10 +18,8 @@ import vstool
 from loguru import logger
 
 parser = argparse.ArgumentParser(prog='ligand-docking', description=__doc__.strip())
-parser.add_argument('ligand', help="Path to a directory contains prepared ligands in SDF format",
-                    type=vstool.check_file)
+parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
-parser.add_argument('-g', '--grid', help="Path to prepared receptor maps filed file in .maps.fld format")
 parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
 parser.add_argument('-y', '--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
@@ -65,8 +63,9 @@ vstool.setup_logger(quiet=args.quiet, verbose=args.verbose)
 
 setattr(args, 'result', args.outdir / 'docking.sdf')
 setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}', task=args.task))
-setattr(args, 'cpu', 4 if args.debug else vstool.get_available_cpus(args.cpu))
-setattr(args, 'gpu', 2 if args.debug else len(vstool.get_available_gpus(args.gpu, task=args.task)))
+setattr(args, 'cpu', 4 if args.debug else args.cpu)
+setattr(args, 'gpu', 2 if args.debug else args.gpu)
+setattr(args, 'batch', 2 if args.debug else args.batch)
 
 
 def filtering(sdf, filters):
@@ -253,21 +252,8 @@ def dock():
 
 
 def submit():
-    outputs = list(args.outdir.glob('batch.*.docking.sdf'))
-    if outputs and all(output.exist() for output in outputs):
-        logger.debug(f'Docking results already exist')
-    else:
-        MolIO.batch_sdf(args.ligand, args.batch, args.outdir / 'batch.')
 
-        data = {
-            'bin': Path(vstool.check_exe('python')).parent, 'outdir': args.outdir,
-            'exe': vstool.check_exe(args.exe),
-            'ligand': args.outdir / f'batch."${{SLURM_ARRAY_TASK_ID}}".sdf',
-            'receptor': args.receptor,
-            'size': f'{args.size[0]} {args.size[1]} {args.size[2]}',
-            'center': f'{args.center[0]} {args.center[1]} {args.center[2]}',
-            'scratch': args.scratch, 'cpu': args.cpu, 'gpu': args.gpu
-        }
+        data = {'bin': Path(vstool.check_exe('python')).parent, 'outdir': args.outdir}
         env = ['source {bin}/activate', '', 'cd {outdir} || {{ echo "Failed to cd into {outdir}!"; exit 1; }}', '']
         cmd = ['docking', str(args.ligand), str(args.receptor),
                f'--size {args.size[0]} {args.size[1]} {args.size[2]}',
@@ -290,7 +276,7 @@ def submit():
         if args.debug:
             cmd.append('--debug')
 
-        vstool.submit('\n'.join(env).format(**data) + f' \\\n  '.join(cmd).format(**data),
+        vstool.submit('\n'.join(env).format(**data) + f' \\\n  '.join(cmd),
                       cpus_per_task=args.cpu, gpus_per_task=args.gpu, job_name=args.name,
                       day=args.day, hour=args.hour, array=f'1-{args.batch}', partition=args.partition,
                       email=args.email, mail_type=args.email_type, log='%x.%j.%A.%a.log',
