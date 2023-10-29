@@ -41,7 +41,7 @@ parser.add_argument('--email-type', help='Email type for send status change emai
                     default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
 parser.add_argument('--dependency', help='Dependency of current job if submit to the queue.')
 parser.add_argument('--log', help='Log file for current job if submit to the queue.')
-parser.add_argument('--summary', help='MD summary file for current job if submit to the queue.')
+parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 parser.add_argument('--delay', help='Hours need to delay running the job.', type=int, default=0)
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
@@ -174,7 +174,7 @@ def main():
 
         p = cmder.run(f'{args.exe} {wd} {view} {args.time}', exit_on_error=False, debug=True, cwd=str(wd))
         if p.returncode == 0:
-            pass
+            parse(wd)
     finally:
         if not debug:
             cmder.run(f'rm -f {receptor} {pose} {view}', log_cmd=False)

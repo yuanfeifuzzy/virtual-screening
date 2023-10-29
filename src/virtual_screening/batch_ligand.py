@@ -45,6 +45,7 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
                         type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 
@@ -72,6 +73,8 @@ def main():
                        f'--method {args.method} --bits {args.bits} --schrodinger {args.schrodinger}')
                 if args.residue:
                     cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
+                if args.summary:
+                    cmd = f'{cmd} --summary {args.summary}'
                     
             if args.debug:
                 cmd = f'{cmd} --debug'

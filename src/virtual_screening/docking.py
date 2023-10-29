@@ -45,6 +45,7 @@ parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root direct
 
 parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
 parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")
 parser.add_argument('--email', help='Email address for send status change emails')
@@ -167,6 +168,8 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
                f'--bits {bits} --schrodinger {schrodinger} --md {md} --time {time}')
         if residue:
             cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
+        if args.summary:
+            cmd = f'{cmd} --summary {args.summary}'
         if debug:
             cmd = f'{cmd} --debug'
         cmder.run(cmd, fmt_cmd=False, debug=True)

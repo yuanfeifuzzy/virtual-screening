@@ -36,6 +36,7 @@ parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root direct
 
 parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
 parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
@@ -80,18 +81,20 @@ def cluster_pose(sdf):
         cmder.run(f'cp {sdf} {out}')
     else:
         logger.debug(f'Clustering {num:,} poses into {args.clusters:,} clusters')
-        program = Path(vstool.check_exe("python")).parent / 'molecule-dynamics'
         cmd = (f'cluster-pose {sdf} --clusters {args.clusters} --cpu {cpu_count()} '
                f'--method {args.method} --bits {args.bits} --output {out}')
         p = cmder.run(cmd, debug=True)
         if p.returncode == 0:
             wd = args.wd / 'md'
             wd.mkdir(exist_ok=True)
-
+            program = Path(vstool.check_exe("python")).parent / 'molecule-dynamics'
+            
             for s in MolIO.parse_sdf(out):
                 if s.mol:
                     output = s.sdf(output=wd / f'{s.title}.sdf')
                     cmd = f'{program} {output} {args.pdb} {wd} --time {args.time} --exe {args.md}'
+                    if args.summary:
+                        cmd = f'{cmd} --summary {args.summary}'
                     if args.debug:
                         cmd = f'{cmd} --debug'
                     mds.append(cmd)

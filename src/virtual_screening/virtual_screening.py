@@ -66,7 +66,10 @@ def main():
     args = parser.parse_args()
     vstool.setup_logger(verbose=True)
 
-    setattr(args, 'result', args.outdir / 'md.rmsd.csv')
+    setattr(args, 'summary', args.outdir / 'docking.md.summary.csv')
+    if args.summary.exists():
+        vstool.debug_and_exit(f'Virtual screening result {args.summary} already exists, skip re-processing')
+        
     setattr(args, 'pdb', args.pdb or vstool.check_file(str(args.receptor)[:-2]))
     setattr(args, 'pdb', vstool.check_file(args.pdb))
     setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}'))
@@ -77,9 +80,6 @@ def main():
     ntasks = args.nodes * ntasks_per_node
     gpu_queue = 'rtx' if 'frontera' in hostname else 'gpu-a100'
 
-    if args.result.exists():
-        vstool.debug_and_exit(f'Virtual screening result {args.result} already exists, skip re-processing')
-
     env = (f'source {Path(vstool.check_exe("python")).parent}/activate\n\n'
            f'cd {args.outdir} || {{ echo "Failed to cd into {args.outdir}!"; exit 1; }}\n')
 
@@ -88,13 +88,14 @@ def main():
            str(args.outdir), f'--outdir {args.scratch}',
            f'--batch {ntasks}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}',
            f'--pdb {args.pdb}', f'--top {args.top}', f'--clusters {args.clusters}',
-           f'--method {args.method}', f'--bits {args.bits}', f'--schrodinger {args.schrodinger}']
+           f'--method {args.method}', f'--bits {args.bits}',
+           f'--schrodinger {args.schrodinger}', f'--summary {args.summary}']
     if args.filter:
         cmd.append(f'--filter {args.filter}')
     if args.flexible:
         cmd.append(f'--flexible {args.flexible}')
     if args.residue:
-        cmd.append('--residue {" ".join(str(x) for x in residue)}')
+        cmd.append(f'--residue {" ".join(str(x) for x in residue)}')
     code, job_id = vstool.submit(cmding(env, cmd, args),
                                  nodes=1, job_name='batch.ligand', hour=1, minute=30,
                                  partition='flex' if 'frontera' in hostname else 'vm-small',
@@ -102,10 +103,10 @@ def main():
                                  log='vs.log', mode='append', script=args.outdir / 'batch.ligand.sh', delay=args.delay)
 
     lcmd = ['module load launcher_gpu', 'export LAUNCHER_WORKDIR={outdir}',
-            'export LAUNCHER_JOB_FILE={outdir}/docking.commands.txt', '',
+            'export LAUNCHER_JOB_FILE={outdir}/{job}.commands.txt', '',
             '${{LAUNCHER_DIR}}/paramrun', '']
 
-    code, job_id = vstool.submit('\n'.join(lcmd).format(outdir=str(args.outdir)),
+    code, job_id = vstool.submit('\n'.join(lcmd).format(outdir=str(args.outdir), job='docking'),
                                  nodes=args.nodes, ntasks=ntasks, ntasks_per_node=ntasks_per_node,
                                  job_name='docking', day=0 if args.debug else 1, hour=4 if args.debug else 12,
                                  partition=gpu_queue,
@@ -115,8 +116,9 @@ def main():
     
     if args.docking_only:
         vs.debug_and_exit('Exit without submitting MD task due to docking only flag was set')
-
-    vstool.submit('\n'.join(lcmd).format(outdir=str(args.scratch)),
+    
+    outdir = vstool.mkdir(args.scratch / 'md')
+    vstool.submit('\n'.join(lcmd).format(outdir=str(outdir), job='md'),
                   nodes=args.nodes, ntasks=ntasks, ntasks_per_node=ntasks_per_node,
                   job_name='md', day=0 if args.debug else 1, hour=8 if args.debug else 20,
                   partition=gpu_queue,
