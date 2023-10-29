@@ -162,6 +162,7 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
             running.append(sdf)
     
     if done and not running:
+        logger.debug('All docking jobs are done, kicking off post docking analysis\n')
         cmd = (f'post-docking {wd} {pdb} --top {top} --clusters {clusters} --method {method} '
                f'--bits {bits} --schrodinger {schrodinger} --md {md} --time {time}')
         if residue:
@@ -169,6 +170,11 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
         if debug:
             cmd = f'{cmd} --debug'
         cmder.run(cmd, fmt_cmd=False, debug=True)
+    else:
+        if running:
+            logger.debug(f'The following {len(running)} batches are still processing or pending for processing:')
+            for run in running:
+                logger.debug(f'  {run}')
     
 
 def main():
