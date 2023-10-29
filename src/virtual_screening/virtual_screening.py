@@ -84,14 +84,17 @@ def main():
            f'cd {args.outdir} || {{ echo "Failed to cd into {args.outdir}!"; exit 1; }}\n')
 
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
-
     cmd = ['batch-ligand', str(args.ligand), str(args.receptor),
            str(args.outdir), f'--outdir {args.scratch}',
-           f'--batch {ntasks}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}']
+           f'--batch {ntasks}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}',
+           f'--pdb {args.pdb}', f'--top {args.top}', f'--clusters {args.clusters}',
+           f'--method {args.method}', f'--bits {args.bits}', f'--schrodinger {args.schrodinger}']
     if args.filter:
         cmd.append(f'--filter {args.filter}')
     if args.flexible:
         cmd.append(f'--flexible {args.flexible}')
+    if args.residue:
+        cmd.append('--residue {" ".join(str(x) for x in residue)}')
     code, job_id = vstool.submit(cmding(env, cmd, args),
                                  nodes=1, job_name='batch.ligand', hour=1, minute=30,
                                  partition='flex' if 'frontera' in hostname else 'vm-small',
@@ -109,18 +112,9 @@ def main():
                                  email=args.email, mail_type=args.email_type,
                                  log='vs.log', mode='append', script=args.outdir / 'docking.sh',
                                  dependency=f'afterok:{job_id}', delay=args.delay)
-
-    cmd = ['post-docking', str(args.outdir), str(args.pdb), f'--top {args.top}', f'--clusters {args.clusters} ',
-           f'--method {args.method}', f'--bits {args.bits} --schrodinger {args.schrodinger} '
-                                      f'--md {args.md} --time {args.time}']
-    if args.residue:
-        cmd.append(f'--residue {" ".join(str(x) for x in args.residue)}')
-    code, job_id = vstool.submit(cmding(env, cmd, args),
-                                 nodes=1, job_name='post.docking',
-                                 day=0, hour=12, partition='normal', email=args.email,
-                                 mail_type=args.email_type, log='vs.log', mode='append',
-                                 script=args.outdir / 'post.docking.sh',
-                                 dependency=f'afterok:{job_id}', delay=args.delay)
+    
+    if args.docking_only:
+        vs.debug_and_exit('Exit without submitting MD task due to docking only flag was set')
 
     vstool.submit('\n'.join(lcmd).format(outdir=str(args.scratch)),
                   nodes=args.nodes, ntasks=ntasks, ntasks_per_node=ntasks_per_node,

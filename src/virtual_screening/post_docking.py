@@ -31,10 +31,11 @@ parser.add_argument('--clusters', help="Number of clusters for clustering top po
 parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
+parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
+                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
 
-parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory', type=vstool.check_dir)
 parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
-parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
@@ -95,7 +96,7 @@ def cluster_pose(sdf):
                         cmd = f'{cmd} --debug'
                     mds.append(cmd)
 
-    if mds:
+    if mds and args.time:
         with md.open('w') as o:
             o.write('\n'.join(mds))
 

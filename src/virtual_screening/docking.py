@@ -22,10 +22,11 @@ from rdkit.Chem import Descriptors
 parser = argparse.ArgumentParser(prog='docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
+parser.add_argument('--center', help="The X, Y, and Z coordinates of the center", type=float, nargs='+')
 parser.add_argument('--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
 parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
-parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
-parser.add_argument('--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
+parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
+                    type=int, nargs='*', default=[15, 15, 15])
 parser.add_argument('--exe', help="Path to docking program executable, default: %(default)s",
                     type=vstool.check_exe, default='/work/08944/fuzzy/share/software/Uni-Dock/bin/unidock')
 
@@ -39,10 +40,11 @@ parser.add_argument('--clusters', help="Number of clusters for clustering top po
 parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
+parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
+                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
 
-parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory', type=vstool.check_dir)
 parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
-parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
 
 parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")
 parser.add_argument('--email', help='Email address for send status change emails')
@@ -166,11 +168,7 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
             cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
         if debug:
             cmd = f'{cmd} --debug'
-        cmder.run(cmd, debug=True)
-        
-        
-def submit():
-    pass
+        cmder.run(cmd, fmt_cmd=False, debug=True)
     
 
 def main():
