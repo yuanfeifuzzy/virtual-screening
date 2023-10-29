@@ -16,56 +16,45 @@ import cmder
 import MolIO
 import vstool
 from loguru import logger
+from rdkit import Chem
+from rdkit.Chem import Descriptors
 
-parser = argparse.ArgumentParser(prog='ligand-docking', description=__doc__.strip())
+parser = argparse.ArgumentParser(prog='docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
 parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
-parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
-parser.add_argument('-y', '--filter', help="Path to a JSON file contains descriptor filters")
-parser.add_argument('-s', '--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
-parser.add_argument('-c', '--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
+parser.add_argument('--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
+parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
+parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)", type=int, nargs='+')
+parser.add_argument('--center', help="T X, Y, and Z coordinates of the center", type=float, nargs='+')
+parser.add_argument('--exe', help="Path to docking program executable, default: %(default)s",
+                    type=vstool.check_exe, default='/work/08944/fuzzy/share/software/Uni-Dock/bin/unidock')
 
-parser.add_argument('-o', '--outdir', default='.', help="Path to a directory for saving output files",
-                    type=vstool.mkdir)
-parser.add_argument('-e', '--exe', help="Path to docking program executable", type=vstool.check_exe)
+parser.add_argument('--pdb', help="Path to a PDB file contains receptor structure", type=vstool.check_file)
+parser.add_argument('--residue', nargs='*', type=int,
+                    help="Residue numbers that interact with ligand via hydrogen bond")
+parser.add_argument('--top', help="Percentage of top poses need to be retained for "
+                                  "downstream analysis, default: %(default)s", type=float, default=10)
+parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
+                                       "default: %(default)s", type=int, default=1000)
+parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
+                    default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
+parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 
-parser.add_argument('--scratch', help="Path to the scratch directory, default: %(default)s",
-                    default=Path(os.environ.get('SCRATCH', '/scratch')))
-parser.add_argument('--cpu', type=int, default=0,
-                    help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
-parser.add_argument('--gpu', type=int, default=0,
-                    help="Maximum number of GPUs can be used for parallel processing, default: %(default)s")
+parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory', type=vstool.check_dir)
+parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
+parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 
-parser.add_argument('--batch', type=int, help="Number of batches that the docking job will be split to, "
-                                              "default: %(default)s", default=8)
-parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
-
-parser.add_argument('--name', help="Name of the docking job, default: %(default)s", default='docking')
-parser.add_argument('--partition', help='Name of the queue, default: %(default)s', default='normal')
+parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")
 parser.add_argument('--email', help='Email address for send status change emails')
 parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
                     default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
-parser.add_argument('--hour', type=int, default=12, help="Number of hours each batch needs to  "
-                                                         "run, default: %(default)s")
-parser.add_argument('--day', type=int, default=0, help="Number of days each batch needs to  "
-                                                       "run, default: %(default)s")
-parser.add_argument('--submit', action='store_true', help="Submit the job to the queue for processing")
-parser.add_argument('--hold', action='store_true',
-                    help="Hold the submission without actually submit the job to the queue")
+parser.add_argument('--delay', help='Hours need to delay running the job.', type=int, default=0)
 
-parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message', action='store_true')
-parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message', action='store_true')
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
-vstool.setup_logger(quiet=args.quiet, verbose=args.verbose)
-
-setattr(args, 'result', args.outdir / 'docking.sdf')
-setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}', task=args.task))
-setattr(args, 'cpu', 4 if args.debug else args.cpu)
-setattr(args, 'gpu', 2 if args.debug else args.gpu)
-setattr(args, 'batch', 2 if args.debug else args.batch)
+vstool.setup_logger(verbose=True)
 
 
 def filtering(sdf, filters):
@@ -114,184 +103,105 @@ def filtering(sdf, filters):
 
 
 def ligand_list(sdf, filters=None, debug=False):
+    logger.debug(f'Parsing {sdf} into individual files')
     output = Path(sdf).with_suffix('.txt')
-    if output.exists():
-        return output
-    else:
-        ligands, outdir = [], Path(sdf).with_suffix('')
-        outdir.mkdir(exist_ok=True)
+    ligands, outdir = [], Path(sdf).parent
 
-        for ligand in MolIO.parse_sdf(sdf):
-            out = outdir / f'{ligand.title}.sdf'
-            ligand.sdf(output=out)
-            if filters:
-                out = filtering(out, filters)
-            if out:
-                ligands.append(out)
-            if debug and len(ligands) == 100:
-                logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
-                break
+    for ligand in MolIO.parse_sdf(sdf):
+        out = outdir / f'{ligand.title}.sdf'
+        ligand.sdf(output=out)
+        if filters:
+            out = filtering(out, filters)
+        if out:
+            ligands.append(out)
+        # if debug and len(ligands) == 100:
+        #     logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
+        #     break
 
-        with output.open('w') as o:
-            o.writelines(f'{ligand}\n' for ligand in ligands)
-        return output
-
-
-def autodock():
-    pass
+    with output.open('w') as o:
+        o.writelines(f'{ligand}\n' for ligand in ligands)
+    return output, ligands
 
 
 def unidock(batch):
     logger.debug(f'Docking ligands in {batch} ...')
-    gpu_id, log, outdir = batch.name.split('.')[-2], batch.with_suffix(".log"), batch.with_suffix('')
-    gpu_id = 3
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
     cmd = (f'{args.exe} --receptor {args.receptor} '
-           f'--ligand_index {batch} --devnum {gpu_id} --search_mode balance --scoring vina '
+           f'--ligand_index {batch} --search_mode balance --scoring vina '
            f'--center_x {cx} --center_y {cy} --center_z {cz} --size_x {sx} --size_y {sy} --size_z {sz} '
-           f'--dir {outdir} &> {log}')
+           f'--dir {Path(batch).parent} &> /dev/null')
 
-    p = cmder.run(cmd, log_cmd=args.verbose)
-    if p.returncode:
-        utility.error_and_exit(f'Docking ligands in {batch} failed', task=args.task, status=-80)
+    cmder.run(cmd)
     logger.debug(f'Docking ligands in {batch} complete.\n')
-    return outdir
-
-
-def gina(sdf):
-    pass
 
 
 def best_pose(sdf):
-    ss = []
-    for s in MolIO.parse(str(sdf)):
-        if s.mol:
-            ss.append(s)
+    ss, out = [], Path(f'{Path(sdf).with_suffix("")}_out.sdf')
+    if out.exists():
+        for s in MolIO.parse(str(out)):
+            if s.mol and s.score < 0:
+                ss.append(s)
+                
+        if not args.debug:
+            os.unlink(sdf)
+            os.unlink(out)
 
     ss = sorted(ss, key=lambda x: x.score)[0] if ss else None
     return ss
 
 
-def dock():
-    output = args.ligand.with_suffix('.docking.sdf')
-    basename = args.scratch / args.ligand.with_suffix('').name
-    batches = [Path(f'{basename}.{i + 1}.sdf') for i in range(args.gpu)]
-    batch_outputs = [Path(f'{basename}.{i + 1}.docking.sdf') for i in range(args.gpu)]
-    
-    if output.exists():
-        logger.debug(f'Docking results for {args.ligand} already exists, skip re-docking')
-    else:
-        poses = []
-        if batch_outputs and all(out.exists() for out in batch_outputs):
-            for out in batch_outputs:
-                logger.debug(f'Loading poses from {out} ...')
-                for pose in MolIO.parse(str(out)):
-                    if pose.mol and pose.score:
-                        poses.append(pose)
+def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md, time, debug):
+    sdfs = wd.glob('batch.*.sdf')
+    running, done = [], []
+    for sdf in sdfs:
+        if sdf.name.endswith('.docking.sdf'):
+            done.append(sdf)
         else:
-            exe = args.exe.lower()
-            if 'unidock' in exe:
-                docker = unidock
-            elif 'gina' in exe:
-                docker = gina
-            elif 'autodock' in exe:
-                docker = autodock
-            else:
-                vstool.error_and_exit(f'Unknown exe {args.exe}, cannot continue', task=args.task, status=-70)
+            running.append(sdf)
+    
+    if done and not running:
+        cmd = (f'post-docking {wd} {pdb} --top {top} --clusters {clusters} --method {method} '
+               f'--bits {bits} --schrodinger {schrodinger} --md {md} --time {time}')
+        if residue:
+            cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
+        if debug:
+            cmd = f'{cmd} --debug'
+        cmder.run(cmd, debug=True)
+        
+        
+def submit():
+    pass
+    
 
-            outdir = args.scratch / args.ligand.with_suffix('').name
-            MolIO.batch_sdf(args.ligand, args.gpu, f'{outdir}.')
-
-            if args.filter:
-                filters = vstool.check_file(args.filters)
-                with open(filters) as f:
-                    filters = json.load(f)
-            else:
-                filters = None
-                
-            batches = [ligand_list(batch, filters=filters, debug=args.debug) for batch in batches]
-
-            vstool.parallel_gpu_task(docker, batches)
-
-            for batch in batches:
-                logger.debug(f'Parsing poses from {batch} ...')
-                ps = vstool.parallel_cpu_task(best_pose, batch.with_suffix('').glob('*_out.sdf'))
-                poses.extend(ps)
-                MolIO.write(ps, str(batch.with_suffix('.docking.sdf')))
-                logger.debug(f'Successfully parsed {len(ps):,} poses.')
-                if args.debug:
-                    cmder.run(f'rm -r {batch.with_suffix("")}*')
-
-        poses = sorted(poses, key=lambda x: x.score)
+def main():
+    if args.filter:
+        filters = vstool.check_file(args.filters)
+        with open(filters) as f:
+            filters = json.load(f)
+    else:
+        filters = None
+    
+    batch, ligands = ligand_list(args.ligand, filters=filters, debug=args.debug)
+    unidock(batch)
+    
+    logger.debug(f'Getting docking poses and scores ...')
+    poses = vstool.parallel_cpu_task(best_pose, ligands)
+    logger.debug(f'Getting docking poses and scores complete.')
+    
+    logger.debug(f'Sorting poses and scores ...')
+    poses = (pose for pose in poses if pose)
+    poses = sorted(poses, key=lambda x: x.score)
+    logger.debug(f'Sorting {len(poses):,} poses with scores complete.')
+    
+    if poses:
+        output = str(args.ligand.with_suffix('.docking.sdf'))
         logger.debug(f'Saving poses to {output} ...')
         MolIO.write(poses, output)
         logger.debug(f'Successfully saved {len(poses):,} poses to {output}.\n')
-
-    done, running, batches = [], [], []
-    for batch in args.ligand.parent.glob('*.sdf'):
-        if not batch.name.endswith('.docking.sdf'):
-            batches.append(batch)
-            out = batch.with_suffix('.docking.sdf')
-            if out.exists():
-                done.append(out)
-            else:
-                running.append(out)
-
-    if running:
-        logger.debug(f'The following {len(running)} batches are under processing or pending for processing:')
-        for run in running:
-            logger.debug(f'  {run}')
-    else:
-        logger.debug('All batches were processed')
-        MolIO.merge_sdf(done, str(args.result))
-    
-        if args.debug:
-            for batch in batches + done:
-                os.unlink(batch)
-            cmder.run(f'rm -r {args.scratch}')
-
-
-def submit():
-
-        data = {'bin': Path(vstool.check_exe('python')).parent, 'outdir': args.outdir}
-        env = ['source {bin}/activate', '', 'cd {outdir} || {{ echo "Failed to cd into {outdir}!"; exit 1; }}', '']
-        cmd = ['docking', str(args.ligand), str(args.receptor),
-               f'--size {args.size[0]} {args.size[1]} {args.size[2]}',
-               f'--center {args.center[0]} {args.center[1]} {args.center[2]}',
-               f'--cpu {args.cpu}', f'--gpu {args.gpu}', f'--scratch {args.scratch}',
-               f'--exe {args.exe.strip()}', f'--task {args.task}']
-
-        if args.flexible:
-            cmd.append(f'--flexible {args.flexible}')
-
-        if args.filter:
-            cmd.append(f'--filter {args.filter}')
-
-        if args.verbose:
-            cmd.append('--verbose')
-
-        if args.quiet:
-            cmd.append('--quiet')
-
-        if args.debug:
-            cmd.append('--debug')
-
-        vstool.submit('\n'.join(env).format(**data) + f' \\\n  '.join(cmd),
-                      cpus_per_task=args.cpu, gpus_per_task=args.gpu, job_name=args.name,
-                      day=args.day, hour=args.hour, array=f'1-{args.batch}', partition=args.partition,
-                      email=args.email, mail_type=args.email_type, log='%x.%j.%A.%a.log',
-                      script='docking.sh', hold=args.hold)
-
-
-@vstool.profile(task=args.task, status=70, error_status=-70, task_name='Docking task')
-def main():
-    if args.result.exists():
-        logger.debug(f'Docking result {args.result} already exists, skip re-docking')
-    else:
-        if args.submit or args.hold:
-            submit()
-        else:
-            dock()
+        
+        if args.pdb:
+            post_docking(args.ligand.parent, args.pdb, args.top, args.residue, args.clusters, args.method,
+                         args.bits, args.schrodinger, args.md, args.time, args.debug)
 
 
 if __name__ == '__main__':

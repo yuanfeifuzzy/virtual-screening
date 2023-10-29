@@ -6,6 +6,7 @@ A pipeline for perform virtual screening in an easy and smart way
 """
 
 import os
+import socket
 import argparse
 from pathlib import Path
 
@@ -14,8 +15,6 @@ import vstool
 
 
 def cmding(env, cmd, args):
-    if args.debug:
-        cmd.append(f'--task {args.task}')
     if args.debug:
         cmd.append('--debug')
     return env + ' \\\n  '.join(cmd)
@@ -27,125 +26,109 @@ def main():
                         type=vstool.check_file)
     parser.add_argument('receptor', help="Path to prepared rigid receptor in PDBQT format file",
                         type=vstool.check_file)
-    parser.add_argument('pdb', help="Path to prepared receptor structure in PDB format")
     parser.add_argument('center', help="The X, Y, and Z coordinates of the center", type=float, nargs='+')
-    
+
+    parser.add_argument('--pdb', help="Path to prepared receptor structure in PDB format")
     parser.add_argument('--flexible', help="Path to prepared flexible receptor file in PDBQT format")
     parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
     parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
-                        type=int, nargs='+', default=[15, 15, 15])
-    
+                        type=int, nargs='*', default=[15, 15, 15])
+
     parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
-    parser.add_argument('--docker', help="Path to docking program executable, default: %(default)s",
-                        type=vstool.check_exe, default='/software/AutoDock/1.5.3/bin/gunidock')
-    
     parser.add_argument('--scratch', help="Path to the scratch directory, default: %(default)s",
                         default=Path(os.environ.get('SCRATCH', '/scratch')))
-    parser.add_argument('--cpu', type=int, default=16,
-                        help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
-    parser.add_argument('--gpu', type=int, default=2,
-                        help="Maximum number of GPUs can be used for parallel processing, default: %(default)s")
-    
-    parser.add_argument('--batch', type=int, help="Number of batches that the docking job will be split to, "
-                                                  "default: %(default)s", default=8)
-    parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
-    
+
     parser.add_argument('--residue', nargs='*', type=int,
-                            help="Residue numbers that interact with ligand via hydrogen bond")
+                        help="Residue numbers that interact with ligand via hydrogen bond")
     parser.add_argument('--top', help="Percentage of top poses need to be retained for "
-                                                    "downstream analysis, default: %(default)s", type=float, default=10)
+                                      "downstream analysis, default: %(default)s", type=float, default=10)
     parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
-                                                    "default: %(default)s", type=int, default=1000)
+                                           "default: %(default)s", type=int, default=1000)
     parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
                         default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
     parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
     parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/software/SchrodingerSuites/2022.4')
-    
+                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+    parser.add_argument('--md', help='Path to md executable, default: %(default)s',
+                        type=vstool.check_exe, default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
     parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
-    parser.add_argument('--openmm_simulate', help='Path to openmm_simulate executable, default: %(default)s',
-                        type=vstool.check_exe, default='/software/openmm/bin/openmm_simulate')
-    
-    parser.add_argument('--partition', help='Name of the queue')
+
+    parser.add_argument('--nodes', type=int, default=8, help="Number of nodes, default: %(default)s.")
     parser.add_argument('--email', help='Email address for send status change emails')
     parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
                         default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
-    
     parser.add_argument('--delay', help='Hours need to delay running the job.', type=int, default=0)
+    
+    parser.add_argument('--docking-only', help='Only perform docking and post-docking and no MD.', action='store_true')
     parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
     parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
-    
+
     args = parser.parse_args()
     vstool.setup_logger(verbose=True)
-    
+
     setattr(args, 'result', args.outdir / 'md.rmsd.csv')
-    setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}', task=args.task))
-    setattr(args, 'cpu', 4 if args.debug else args.cpu)
-    setattr(args, 'gpu', 2 if args.debug else args.gpu)
-    setattr(args, 'batch', 2 if args.debug else args.batch)
-    
+    setattr(args, 'pdb', args.pdb or vstool.check_file(str(args.receptor)[:-2]))
+    setattr(args, 'pdb', vstool.check_file(args.pdb))
+    setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}'))
+    setattr(args, 'nodes', 2 if args.debug else args.nodes)
+
+    hostname = socket.gethostname()
+    ntasks_per_node = 4 if 'frontera' in hostname else 3
+    ntasks = args.nodes * ntasks_per_node
+    gpu_queue = 'rtx' if 'frontera' in hostname else 'gpu-a100'
+
     if args.result.exists():
-        vstool.debug_and_exit(f'Virtual screening result {args.result} already exists, skip re-processing',
-                              task=args.task, status=140)
-    
+        vstool.debug_and_exit(f'Virtual screening result {args.result} already exists, skip re-processing')
+
     env = (f'source {Path(vstool.check_exe("python")).parent}/activate\n\n'
            f'cd {args.outdir} || {{ echo "Failed to cd into {args.outdir}!"; exit 1; }}\n')
-    
-    cmd = ['batch-ligand', str(args.ligand), f'--outdir {args.outdir}', f'--batch {args.batch}', f'--task {args.task}']
-    code, job_id = vstool.submit(cmding(env, cmd, args),
-                                 cpus_per_task=1, job_name='batch.ligand', hour=0, minute=30,
-                                 partition=args.partition, email=args.email, mail_type=args.email_type,
-                                 log='%x.%j.log', script=args.outdir / 'batch.ligand.sh', delay=args.delay)
-    if not job_id:
-        vstool.error_and_exit('Failed to submit batch ligand job, cannot continue', ta=args.task, status=-10)
-    
-    cmd = ['docking',
-           str(args.outdir / 'batch."${{SLURM_ARRAY_TASK_ID}}".sdf'),
-           str(args.receptor),
-           f'--size {args.size[0]} {args.size[1]} {args.size[2]}',
-           f'--center {args.center[0]} {args.center[1]} {args.center[2]}',
-           f'--cpu {args.cpu}', f'--gpu {args.gpu}',
-           f'--scratch {args.scratch}', f'--exe {args.docker.strip()}', f'--task {args.task}']
-    if args.flexible:
-        cmd.append(f'--flexible {args.flexible}')
+
+    (cx, cy, cz), (sx, sy, sz) = args.center, args.size
+
+    cmd = ['batch-ligand', str(args.ligand), str(args.receptor),
+           str(args.outdir), f'--outdir {args.scratch}',
+           f'--batch {ntasks}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}']
     if args.filter:
         cmd.append(f'--filter {args.filter}')
+    if args.flexible:
+        cmd.append(f'--flexible {args.flexible}')
     code, job_id = vstool.submit(cmding(env, cmd, args),
-                                 cpus_per_task=args.cpu, gpus_per_task=args.gpu,
-                                 job_name='docking', day=1, hour=12, array=f'1-{args.batch}',
-                                 partition=args.partition, email=args.email, mail_type=args.email_type,
-                                 log='%x.%j.%A.%a.log', script=args.outdir / 'docking.sh',
+                                 nodes=1, job_name='batch.ligand', hour=1, minute=30,
+                                 partition='flex' if 'frontera' in hostname else 'vm-small',
+                                 email=args.email, mail_type=args.email_type,
+                                 log='vs.log', mode='append', script=args.outdir / 'batch.ligand.sh', delay=args.delay)
+
+    lcmd = ['module load launcher_gpu', 'export LAUNCHER_WORKDIR={outdir}',
+            'export LAUNCHER_JOB_FILE={outdir}/docking.commands.txt', '',
+            '${{LAUNCHER_DIR}}/paramrun', '']
+
+    code, job_id = vstool.submit('\n'.join(lcmd).format(outdir=str(args.outdir)),
+                                 nodes=args.nodes, ntasks=ntasks, ntasks_per_node=ntasks_per_node,
+                                 job_name='docking', day=0 if args.debug else 1, hour=4 if args.debug else 12,
+                                 partition=gpu_queue,
+                                 email=args.email, mail_type=args.email_type,
+                                 log='vs.log', mode='append', script=args.outdir / 'docking.sh',
                                  dependency=f'afterok:{job_id}', delay=args.delay)
-    if not job_id:
-        vstool.error_and_eixt('Failed to submit docking job, cannot continue', ta=args.task, status=-10)
-    
-    cmd = ['post-docking', str(args.outdir / 'docking.sdf'), 
-           str(args.pdb), f'--top {args.top}', f'--clusters {args.clusters} ',
-           f'--method {args.method}', f'--bits {args.bits} ', f'--cpu {args.cpu}', f'--task {args.task}',
-           f'--schrodinger {args.schrodinger}']
+
+    cmd = ['post-docking', str(args.outdir), str(args.pdb), f'--top {args.top}', f'--clusters {args.clusters} ',
+           f'--method {args.method}', f'--bits {args.bits} --schrodinger {args.schrodinger} '
+                                      f'--md {args.md} --time {args.time}']
     if args.residue:
         cmd.append(f'--residue {" ".join(str(x) for x in args.residue)}')
     code, job_id = vstool.submit(cmding(env, cmd, args),
-                                 cpus_per_task=args.cpu, job_name='post.docking',
-                                 day=0, hour=12, partition=args.partition, email=args.email,
-                                 mail_type=args.email_type, log='%x.%j.log', script=args.outdir / 'post.docking.sh',
+                                 nodes=1, job_name='post.docking',
+                                 day=0, hour=12, partition='normal', email=args.email,
+                                 mail_type=args.email_type, log='vs.log', mode='append',
+                                 script=args.outdir / 'post.docking.sh',
                                  dependency=f'afterok:{job_id}', delay=args.delay)
-    
-    if not job_id:
-        vstool.error_and_eixt('Failed to submit post docking analysis job, cannot continue', ta=args.task, status=-10)
-    
-    cmd = ['molecule-dynamics', str(args.outdir / 'cluster.pose.sdf'),
-           str(args.pdb), f'--outdir {args.outdir}', f'--time {args.time} ',
-           f'--cpu {args.cpu}', f'--gpu {args.gpu}', f'--task {args.task}',
-           f'--openmm_simulate {args.openmm_simulate}']
-    code, job_id = vstool.submit(cmding(env, cmd, args),
-                                 cpus_per_task=args.cpu, gpus_per_task=args.gpu,
-                                 job_name='md', day=2, hour=0, array=f'1-{args.batch}',
-                                 partition=args.partition, email=args.email, mail_type=args.email_type,
-                                 log='%x.%j.%A.%a.log', script=args.outdir / 'md.sh',
-                                 dependency=f'afterok:{job_id}', delay=args.delay)
-    if not job_id:
-        vstool.error_and_eixt('Failed to submit molecule dynamics job', ta=args.task, status=-10)
+
+    vstool.submit('\n'.join(lcmd).format(outdir=str(args.scratch)),
+                  nodes=args.nodes, ntasks=ntasks, ntasks_per_node=ntasks_per_node,
+                  job_name='md', day=0 if args.debug else 1, hour=8 if args.debug else 20,
+                  partition=gpu_queue,
+                  email=args.email, mail_type=args.email_type,
+                  log='vs.log', mode='append', script=args.outdir / 'md.sh',
+                  dependency=f'afterok:{job_id}', delay=args.delay)
 
 
 if __name__ == '__main__':

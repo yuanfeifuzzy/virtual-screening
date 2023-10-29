@@ -25,9 +25,11 @@ dependencies = [
     'numpy',
     'scipy',
     'pandas',
-    'scikit-learn'
+    'scikit-learn',
+    'pandarallel'
 ]
-
+[tool.setuptools.package-data]
+"*" = ["*.sh"]
 [project.scripts]
 batch-ligand = "virtual_screening.batch_ligand:main"
 cluster-pose = "virtual_screening.cluster_pose:main"
