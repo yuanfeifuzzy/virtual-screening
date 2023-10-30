@@ -89,7 +89,8 @@ def main():
            f'--batch {ntasks}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}',
            f'--pdb {args.pdb}', f'--top {args.top}', f'--clusters {args.clusters}',
            f'--method {args.method}', f'--bits {args.bits}',
-           f'--schrodinger {args.schrodinger}', f'--summary {args.summary}']
+           f'--schrodinger {args.schrodinger}', f'--md {args.md}', f'--time {args.time}',
+           f'--summary {args.summary}']
     if args.filter:
         cmd.append(f'--filter {args.filter}')
     if args.flexible:
@@ -116,6 +117,20 @@ def main():
     
     if args.docking_only:
         vs.debug_and_exit('Exit without submitting MD task due to docking only flag was set')
+
+    if not job_id:
+        vstool.error_and_eixt('Failed to submit docking job, cannot continue', ta=args.task, status=-5)
+
+    cmd = ['post-docking', str(args.scratch), str(args.pdb), f'--top {args.top}', f'--clusters {args.clusters} ',
+           f'--method {args.method}', f'--bits {args.bits} ', f'--schrodinger {args.schrodinger}',
+           f'--time {args.time}', f'--md {args.md}', f'--summary {args.summary}']
+    if args.residue:
+        cmd.append(f'--residue {" ".join(str(x) for x in args.residue)}')
+
+    code, job_id = vstool.submit(cmding(env, cmd, args), nodes=1, job_name='post.docking',
+                                 hour=1, minute=50, partition='flex' if 'frontera' in hostname else 'vm-small',
+                                 email=args.email, mail_type=args.email_type, log='vs.log', mode='append',
+                                 script=args.outdir / 'post.docking.sh', dependency=f'afterok:{job_id}')
     
     outdir = vstool.mkdir(args.scratch / 'md')
     vstool.submit('\n'.join(lcmd).format(outdir=str(outdir), job='md'),

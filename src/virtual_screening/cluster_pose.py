@@ -13,6 +13,7 @@ import time
 import traceback
 from pathlib import Path
 from datetime import timedelta
+from multiprocessing import cpu_count
 
 import vstool
 import MolIO
@@ -29,11 +30,11 @@ parser.add_argument('-o', '--output', help="Path to a output for saving best pos
                                            "in SDF format, default: %(default)s", default='cluster.pose.sdf')
 parser.add_argument('-n', '--clusters', help="Number of clusters, default: %(default)s", default=1000, type=int)
 parser.add_argument('-m', '--method', help="Method for generating fingerprints, default: %(default)s",
-                    default=METHODS[-1], choices=METHODS)
+                    default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('-b', '--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 
 args = parser.parse_args()
-vstool.setup_logger(verbose=True)
+logger = vstool.setup_logger(verbose=True)
 
 
 def generate_fingerprint(mol, bits=1024, method='rdk5'):
@@ -67,18 +68,19 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
     with Chem.SDMolSupplier(sdf) as f:
         # By default, pickling removes mol properties
         mol = ((m, m.GetProp('_Name')) for m in f if m)
-        if processes > 1:
-            logger.debug(f'Generating fingerprints using {method} method with {processes} CPUs')
-            fps = vstool.parallel_cpu_task(generate_fingerprint, mol, bits=bits, method=method, chunksize=500)
-        else:
-            logger.debug(f'Generating fingerprints using {method} method with a single CPU')
-            fps = [generate_fingerprint(m, bits=bits, method=method) for m in mol]
+
+        # processes = cpu_count()
+        processes = 32
+        logger.debug(f'Generating fingerprints using {method} method with {processes} CPUs')
+        fps = vstool.parallel_cpu_task(generate_fingerprint, mol, bits=bits, method=method, chunksize=processes,
+                                       processes=processes)
+
     if fps:
         fp, names = [x[0] for x in fps], [x[1] for x in fps]
     logger.debug(f'Successfully generated fingerprints for {len(names)} molecules')
 
     logger.debug('Clustering top poses using scikit-learn k-mean mini-batches')
-    dd = kmeans_cluster(np.array(fp), names, n_clusters=n_clusters, batch_size=256 * processes)
+    dd = kmeans_cluster(np.array(fp), names, n_clusters=n_clusters, batch_size=2 * processes)
     logger.debug('Clustering top poses using scikit-learn k-mean mini-batches complete')
 
     logger.debug('Getting best pose in each cluster')

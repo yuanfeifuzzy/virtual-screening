@@ -84,7 +84,7 @@ def cluster_pose(sdf):
         cmder.run(f'cp {sdf} {out}')
     else:
         logger.debug(f'Clustering {num:,} poses into {args.clusters:,} clusters')
-        cmd = (f'cluster-pose {sdf} --clusters {args.clusters} --cpu {cpu_count()} '
+        cmd = (f'cluster-pose {sdf} --clusters {args.clusters} '
                f'--method {args.method} --bits {args.bits} --output {out}')
         cmder.run(cmd, debug=True)
 

@@ -42,11 +42,9 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
                         type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
-
 parser.add_argument('--md', help='Path to md executable, default: %(default)s',
-                    type=vstool.check_exe,
-                    default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
-parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
+                        type=vstool.check_exe, default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
+parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
 parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")
@@ -157,14 +155,20 @@ def best_pose(sdf):
 
 def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md, time, debug):
     sdfs = wd.glob('batch.*.sdf')
-    running, done = [], []
+    batches, done, running = [], [], []
     for sdf in sdfs:
         if sdf.name.endswith('.docking.sdf'):
             done.append(sdf)
         else:
-            running.append(sdf)
+            batches.append(sdf)
+            if not sdf.with_suffix('.docking.sdf').exists():
+                running.append(sdf)
     
-    if done and not running:
+    if running:
+        logger.debug(f'The following {len(running)} batches are still processing or pending for processing:')
+        for run in running:
+            logger.debug(f'  {run}')
+    else:
         logger.debug('All docking jobs are done, kicking off post docking analysis\n')
         cmd = (f'post-docking {wd} {pdb} --top {top} --clusters {clusters} --method {method} '
                f'--bits {bits} --schrodinger {schrodinger} --md {md} --time {time}')
@@ -175,11 +179,10 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
         if debug:
             cmd = f'{cmd} --debug'
         cmder.run(cmd, fmt_cmd=False, debug=True)
-    else:
-        if running:
-            logger.debug(f'The following {len(running)} batches are still processing or pending for processing:')
-            for run in running:
-                logger.debug(f'  {run}')
+
+        if not args.debug:
+            for batch in batches:
+                os.unlink(batch)
     
 
 def main():
@@ -206,11 +209,12 @@ def main():
         output = str(args.ligand.with_suffix('.docking.sdf'))
         logger.debug(f'Saving poses to {output} ...')
         MolIO.write(poses, output)
+        MolIO.write(poses, Path(args.summary).parent / 'docking.sdf')
         logger.debug(f'Successfully saved {len(poses):,} poses to {output}.\n')
         
-        if args.pdb:
-            post_docking(args.ligand.parent, args.pdb, args.top, args.residue, args.clusters, args.method,
-                         args.bits, args.schrodinger, args.md, args.time, args.debug)
+        # if args.pdb:
+        #     post_docking(args.ligand.parent, args.pdb, args.top, args.residue, args.clusters, args.method,
+        #                  args.bits, args.schrodinger, args.md, args.time, args.debug)
 
 
 if __name__ == '__main__':
