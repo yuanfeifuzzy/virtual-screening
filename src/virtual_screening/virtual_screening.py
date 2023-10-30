@@ -95,7 +95,7 @@ def main():
     if args.flexible:
         cmd.append(f'--flexible {args.flexible}')
     if args.residue:
-        cmd.append(f'--residue {" ".join(str(x) for x in residue)}')
+        cmd.append(f'--residue {" ".join(str(x) for x in args.residue)}')
     code, job_id = vstool.submit(cmding(env, cmd, args),
                                  nodes=1, job_name='batch.ligand', hour=1, minute=30,
                                  partition='flex' if 'frontera' in hostname else 'vm-small',

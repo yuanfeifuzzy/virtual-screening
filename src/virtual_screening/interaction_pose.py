@@ -24,7 +24,7 @@ from pandarallel import pandarallel
 logger = vstool.setup_logger(verbose=True)
 
 
-def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf', schrodinger=''):
+def interaction_pose(sdf, pdb, residue, output='interaction.pose.sdf', schrodinger=''):
     schrodinger = schrodinger or os.environ.get('SCHRODINGER', '')
     if not schrodinger:
         vstool.error_and_exit('No schrodinger was provided and cannot find SCHRODINGER')
@@ -40,7 +40,7 @@ def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf', sc
         cmder.run(f'{schrodinger}/utilities/structconvert {sdf} {pose}', exit_on_error=True)
         cmder.run(f'cat {receptor} {pose} > {view}')
 
-        options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(residue_number, 1)])
+        options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(residue, 1)])
         p = cmder.run(f'{schrodinger}/run pose_filter.py {view} {out} {options} -WAIT -NOJOBID > {log}',
                       fmt_cmd=False, exit_on_error=True, debug=True)
         if p.returncode == 0:

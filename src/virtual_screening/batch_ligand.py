@@ -72,7 +72,7 @@ def main():
                 cmd = (f'{cmd} --pdb {args.pdb} --top {args.top} --cluster {args.cluster} '
                        f'--method {args.method} --bits {args.bits} --schrodinger {args.schrodinger}')
                 if args.residue:
-                    cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
+                    cmd = f'{cmd} --residue {" ".join(str(x) for x in args.residue)}'
                 if args.summary:
                     cmd = f'{cmd} --summary {args.summary}'
                     
