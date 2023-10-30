@@ -43,8 +43,10 @@ parser.add_argument('--bits', help="Number of fingerprint bits, default: %(defau
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
                         type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
 
-parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
-parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--md', help='Path to md executable, default: %(default)s',
+                    type=vstool.check_exe,
+                    default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
+parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")

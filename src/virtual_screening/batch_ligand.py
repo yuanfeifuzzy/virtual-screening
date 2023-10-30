@@ -46,6 +46,10 @@ parser.add_argument('--bits', help="Number of fingerprint bits, default: %(defau
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
                         type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
 parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
+parser.add_argument('--md', help='Path to md executable, default: %(default)s',
+                    type=vstool.check_exe,
+                    default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
+parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 
@@ -69,17 +73,17 @@ def main():
                 cmd = f'{cmd} --filter {args.filter}'
             
             if args.pdb:
-                cmd = (f'{cmd} --pdb {args.pdb} --top {args.top} --cluster {args.cluster} '
+                cmd = (f'{cmd} --pdb {args.pdb} --top {args.top} --cluster {args.clusters} '
                        f'--method {args.method} --bits {args.bits} --schrodinger {args.schrodinger}')
                 if args.residue:
                     cmd = f'{cmd} --residue {" ".join(str(x) for x in args.residue)}'
                 if args.summary:
-                    cmd = f'{cmd} --summary {args.summary}'
+                    cmd = f'{cmd} --summary {args.summary} --md {args.md} --time {args.time}'
                     
             if args.debug:
                 cmd = f'{cmd} --debug'
             cmds.append(cmd)
-        o.write('\n'.join(cmds))
+        o.writelines(f'{cmd}\n' for cmd in cmds)
 
 
 if __name__ == '__main__':

@@ -34,8 +34,10 @@ parser.add_argument('--bits', help="Number of fingerprint bits, default: %(defau
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
                         type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
 
-parser.add_argument('--md', help='Path to md executable', type=vstool.check_exe)
-parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
+parser.add_argument('--md', help='Path to md executable, default: %(default)s',
+                    type=vstool.check_exe,
+                    default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
+parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
@@ -46,10 +48,11 @@ vstool.setup_logger(verbose=True)
 
 
 def concatenate_sdf():
-    sdf = args.wd / 'docking.sdf'
+    sdf = 'docking.sdf'
     cmder.run(f'cat {args.wd}/*.docking.sdf > {sdf}')
     if not args.debug:
         cmder.run(f'rm {args.wd}/*.docking.sdf')
+    cmder.run(f'cp {sdf} > {Path(args.summary).parent / sdf}')
     return sdf
 
 
@@ -59,7 +62,6 @@ def interaction_pose(sdf, out='interaction.pose.sdf'):
         cmd = (f'interaction-pose {sdf} {args.pdb} --schrodinger {args.schrodinger} '
                f'--residue {" ".join(str(x) for x in args.residue)} --output {out}')
         cmder.run(cmd, fmt_cmd=False, debug=True)
-
     else:
         logger.debug(f'No residue was provided, retrieving top {args.top} percent poses')
         num = sum(1 for _ in MolIO.parse_sdf(sdf))
@@ -69,11 +71,12 @@ def interaction_pose(sdf, out='interaction.pose.sdf'):
                 if i == n:
                     break
                 o.write(s.sdf(title=f'{s.title}_{s.score}'))
+    cmder.run(f'cp {out} {Path(args.summary).parent / out}')
     return out
 
 
 def cluster_pose(sdf):
-    out, md, mds = args.wd / 'cluster.pose.sdf', args.wd / 'md.commands.txt', []
+    out, md, mds = 'cluster.pose.sdf', 'md.commands.txt', []
 
     num = sum(1 for _ in MolIO.parse_sdf(sdf))
     if num <= args.clusters:
@@ -83,28 +86,30 @@ def cluster_pose(sdf):
         logger.debug(f'Clustering {num:,} poses into {args.clusters:,} clusters')
         cmd = (f'cluster-pose {sdf} --clusters {args.clusters} --cpu {cpu_count()} '
                f'--method {args.method} --bits {args.bits} --output {out}')
-        p = cmder.run(cmd, debug=True)
-        if p.returncode == 0:
-            wd = args.wd / 'md'
-            wd.mkdir(exist_ok=True)
-            program = Path(vstool.check_exe("python")).parent / 'molecule-dynamics'
-            
-            for s in MolIO.parse_sdf(out):
-                if s.mol:
-                    output = s.sdf(output=wd / f'{s.title}.sdf')
-                    cmd = f'{program} {output} {args.pdb} {wd} --time {args.time} --exe {args.md}'
-                    if args.summary:
-                        cmd = f'{cmd} --summary {args.summary}'
-                    if args.debug:
-                        cmd = f'{cmd} --debug'
-                    mds.append(cmd)
+        cmder.run(cmd, debug=True)
+
+    cmder.run(f'cp {out} {Path(args.summary).parent / out}')
+
+    wd = vstool.mkdir('md')
+    program = Path(vstool.check_exe("python")).parent / 'molecule-dynamics'
+
+    for s in MolIO.parse_sdf(out):
+        if s.mol:
+            output = s.sdf(output=wd / f'{s.title}.sdf')
+            cmd = f'{program} {output} {args.pdb} --time {args.time} --exe {args.md}'
+            if args.summary:
+                cmd = f'{cmd} --summary {args.summary}'
+            if args.debug:
+                cmd = f'{cmd} --debug'
+            mds.append(cmd)
 
     if mds and args.time:
         with md.open('w') as o:
-            o.write('\n'.join(mds))
+            o.write(f'{x}\n' for x in mds)
 
 
 def main():
+    os.chdir(args.wd)
     sdf = concatenate_sdf()
     sdf = interaction_pose(sdf)
     cluster_pose(sdf)

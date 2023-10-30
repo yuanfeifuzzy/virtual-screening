@@ -151,33 +151,36 @@ def parse(wd):
     
         
 def main():
-    outdir = args.sdf.parent
-    wd = vstool.mkdir(outdir / args.sdf.with_suffix(''))
-    os.chdir(wd)
-    
-    receptor = args.pdb.with_suffix('.mae').name
-    pose = args.sdf.with_suffix('.mae').name
-    view = args.sdf.with_suffix('.pose.view.mae').name
-    
-    try:
-        p = cmder.run(f'{schrodinger}/utilities/structconvert {pdb} {receptor}', exit_on_error=False, cwd=str(wd))
-        if p.returncode:
-            raise RuntimeError(f'Failed to convert {args.pdb.name} to {receptor}')
-        
-        p = cmder.run(f'{schrodinger}/utilities/structconvert {sdf} {pose}', exit_on_error=False, cwd=str(wd))
-        if p.returncode:
-            raise RuntimeError(f'Failed to convert {args.sdf.name} to {pose}')
-        
-        p = cmder.run(f'cat {receptor} {pose} > {view}', exit_on_error=False, cwd=str(wd))
-        if p.returncode:
-            raise RuntimeError(f'Failed to concatenate {receptor.name} and {pose}')
+    if args.nodes:
+        submit()
+    else:
+        outdir = args.sdf.parent
+        wd = vstool.mkdir(outdir / args.sdf.with_suffix(''))
+        os.chdir(wd)
 
-        p = cmder.run(f'{args.exe} {wd} {view} {args.time}', exit_on_error=False, debug=True, cwd=str(wd))
-        if p.returncode == 0:
-            parse(wd)
-    finally:
-        if not debug:
-            cmder.run(f'rm -f {receptor} {pose} {view}', log_cmd=False)
+        receptor = args.pdb.with_suffix('.mae').name
+        pose = args.sdf.with_suffix('.mae').name
+        view = args.sdf.with_suffix('.pose.view.mae').name
+
+        try:
+            p = cmder.run(f'{schrodinger}/utilities/structconvert {pdb} {receptor}', exit_on_error=False, cwd=str(wd))
+            if p.returncode:
+                raise RuntimeError(f'Failed to convert {args.pdb.name} to {receptor}')
+
+            p = cmder.run(f'{schrodinger}/utilities/structconvert {sdf} {pose}', exit_on_error=False, cwd=str(wd))
+            if p.returncode:
+                raise RuntimeError(f'Failed to convert {args.sdf.name} to {pose}')
+
+            p = cmder.run(f'cat {receptor} {pose} > {view}', exit_on_error=False, cwd=str(wd))
+            if p.returncode:
+                raise RuntimeError(f'Failed to concatenate {receptor.name} and {pose}')
+
+            p = cmder.run(f'{args.exe} {wd} {view} {args.time}', exit_on_error=False, debug=True, cwd=str(wd))
+            if p.returncode == 0:
+                parse(wd)
+        finally:
+            if not debug:
+                cmder.run(f'rm -f {receptor} {pose} {view}', log_cmd=False)
 
 
 if __name__ == '__main__':
