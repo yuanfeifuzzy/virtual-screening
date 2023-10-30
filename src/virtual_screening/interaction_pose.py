@@ -25,8 +25,6 @@ logger = vstool.setup_logger(verbose=True)
 
 
 def interaction_pose(sdf, pdb, residue_number, output='interaction.pose.sdf', schrodinger=''):
-    vstool.setup_logger(verbose=verbose, quiet=quiet)
-
     schrodinger = schrodinger or os.environ.get('SCHRODINGER', '')
     if not schrodinger:
         vstool.error_and_exit('No schrodinger was provided and cannot find SCHRODINGER')
