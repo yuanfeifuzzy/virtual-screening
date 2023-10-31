@@ -65,7 +65,7 @@ def kmeans_cluster(x, ligands, n_clusters=1000, batch_size=1024):
 
 def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', bits=1024):
     fp, names = [], []
-    with Chem.SDMolSupplier(sdf) as f:
+    with Chem.SDMolSupplier(sdf, removeHs=False) as f:
         # By default, pickling removes mol properties
         mol = ((m, m.GetProp('_Name')) for m in f if m)
 
@@ -92,7 +92,7 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
     if output:
         out = f'{output}.tmp.sdf'
         dd.to_csv(Path(output).with_suffix('.csv'), index=False)
-        with Chem.SDMolSupplier(sdf) as f, Chem.SDWriter(out) as o:
+        with Chem.SDMolSupplier(sdf, removeHs=False) as f, Chem.SDWriter(out) as o:
             mol = {m.GetProp('_Name'): m for m in f if m}
             for row in dd.itertuples():
                 o.write(mol[f'{row.ligand}_{row.score}'])
@@ -102,7 +102,8 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
         ss = sorted([s for s in ss if s.mol], key=lambda x: x.score)
         with open(output, 'w') as o:
             o.writelines(s.sdf(title=s.title.rsplit('_', 1)[0]) for s in ss)
-        os.unlink(out)
+        # os.unlink(out)
+        print(out)
         logger.debug(f'Successfully saved {len(ss):,} poses to {output}')
     return dd
 
@@ -110,7 +111,7 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
 def main():
     try:
         start = time.time()
-        output = Path(args.output) or Path(sdf).resolve().parent / 'clster.pose.sdf'
+        output = Path(args.output) or Path(sdf).resolve().parent / 'cluster.pose.sdf'
         if output.exists():
             vstool.debug_and_exit(f'Cluster pose already exists, skip re-processing\n')
 
