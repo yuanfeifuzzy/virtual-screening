@@ -159,46 +159,19 @@ def best_pose(sdf):
                 
         if not args.debug:
             try:
-                os.unlink(sdf)
                 os.unlink(out)
             except Exception as e:
                 logger.debug(f'Failed to delete files after parse best pose due to {e}')
 
+    if not args.debug:
+        try:
+            os.unlink(sdf)
+        except Exception as e:
+            logger.debug(f'Failed to delete files after parse best pose due to {e}')
+
     ss = sorted(ss, key=lambda x: x.score)[0] if ss else None
     return ss
 
-
-def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md, time, debug):
-    sdfs = wd.glob('batch.*.sdf')
-    batches, done, running = [], [], []
-    for sdf in sdfs:
-        if sdf.name.endswith('.docking.sdf'):
-            done.append(sdf)
-        else:
-            batches.append(sdf)
-            if not sdf.with_suffix('.docking.sdf').exists():
-                running.append(sdf)
-    
-    if running:
-        logger.debug(f'The following {len(running)} batches are still processing or pending for processing:')
-        for run in running:
-            logger.debug(f'  {run}')
-    else:
-        logger.debug('All docking jobs are done, kicking off post docking analysis\n')
-        cmd = (f'post-docking {wd} {pdb} --top {top} --clusters {clusters} --method {method} '
-               f'--bits {bits} --schrodinger {schrodinger} --md {md} --time {time}')
-        if residue:
-            cmd = f'{cmd} --residue {" ".join(str(x) for x in residue)}'
-        if args.summary:
-            cmd = f'{cmd} --summary {args.summary}'
-        if debug:
-            cmd = f'{cmd} --debug'
-        cmder.run(cmd, fmt_cmd=False, debug=True)
-
-        if not args.debug:
-            for batch in batches:
-                os.unlink(batch)
-    
 
 def main():
     if args.filter:
@@ -226,10 +199,6 @@ def main():
         MolIO.write(poses, output)
         MolIO.write(poses, Path(args.summary).parent / 'docking.sdf')
         logger.debug(f'Successfully saved {len(poses):,} poses to {output}.\n')
-        
-        # if args.pdb:
-        #     post_docking(args.ligand.parent, args.pdb, args.top, args.residue, args.clusters, args.method,
-        #                  args.bits, args.schrodinger, args.md, args.time, args.debug)
 
 
 if __name__ == '__main__':
