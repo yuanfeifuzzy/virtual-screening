@@ -44,7 +44,7 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
 parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
 parser.add_argument('--md', help='Path to md executable, default: %(default)s',
                     type=vstool.check_exe,

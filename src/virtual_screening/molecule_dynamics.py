@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 """
@@ -22,13 +22,13 @@ import MolIO
 import pandas as pd
 from rdkit import Chem
 
-logger = vstool.setup_logger(verbose=True)
-VENV = '/work/08944/fuzzy/share/software/virtual-screening/venv'
-MD = f'{VENV}/lib/python3.11/site-packages/virtual_screening/desmond_md.sh'
+
+SCRIPT = importlib.resources.files(__package__) / 'desmond_md.sh'
 
 parser = argparse.ArgumentParser(prog='molecule-dynamics', description=__doc__.strip())
 parser.add_argument('sdf', help="Path to a single SDF file", type=vstool.check_file)
-parser.add_argument('pdb', help="Path to a PDF file contains the structure for the docking target", type=vstool.check_file)
+parser.add_argument('pdb', help="Path to a PDF file contains the structure for the docking target",
+                    type=vstool.check_file)
 parser.add_argument('-t', '--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 parser.add_argument('-e', '--exe', help='Path to MD executable, default: %(default)s',
                     type=vstool.check_exe, default=MD)
@@ -48,7 +48,8 @@ parser.add_argument('--debug', help='Enable debug mode (for development purpose)
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
-vstool.setup_logger(verbose=True)
+logger = vstool.setup_logger(verbose=True)
+
 setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.sdf.parent.name}'))
 
 
@@ -57,38 +58,38 @@ def submit():
     ntasks_per_node = 4 if 'frontera' in hostname else 3
     ntasks = args.nodes * ntasks_per_node
     gpu_queue = 'rtx' if 'frontera' in hostname else 'gpu-a100'
-    
+
     lcmd = ['module load launcher_gpu', 'export LAUNCHER_WORKDIR={outdir}',
             'export LAUNCHER_JOB_FILE={outdir}/docking.commands.txt', '', '${{LAUNCHER_DIR}}/paramrun', '']
-    
+
     logger.debug(f'Splitting {sdf} into {ntasks} batches ...')
     batches = MolIO.batch_sdf(sdf, ntasks, outdir / 'batch.')
-    
+
     cmds, output = [], outdir / 'md.commands.txt'
     program = Path(vstool.check_exe("python")).parent / 'docking'
-    
+
     for batch in batches:
         cmd = f'{program} {batch} {args.pdb} --time {args.time} --exe {args.exe} --scratch {args.scratch}'
         if args.debug:
             cmd = f'{cmd} --debug'
         cmds.append(cmd)
-        
+
     if cmds:
         with output.open('w') as o:
             o.writelines(f'{cmd}\n' for cmd in cmds)
         logger.debug(f'Successfully saved {len(cmds)} launch commands to {output}')
-        
+
         vstool.submit('\n'.join(lcmd).format(outdir=str(outdir)), nodes=args.nodes, ntasks=ntasks,
                       ntasks_per_node=ntasks_per_node, job_name='md', day=0 if args.debug else 1,
                       hour=8 if args.debug else 20, partition=gpu_queue, email=args.email, mail_type=args.email_type,
                       log=args.log or 'md.log', mode='append' if args.log else '',
                       script=outdir / 'md.sh', dependency=args.dependency, delay=args.delay)
-        
-        
+
+
 def parse(wd):
     eaf, sdf, output = wd / 'md.eaf', f'{wd}.sdf', f'{wd}.rmsd.csv'
     logger.debug(f'Parsing {eaf} ...')
-    rmsd = []
+    rmsd, flag, n = [], 0, 1
     with eaf.open() as f:
         for line in f:
             if "RMSD" in line:
@@ -96,7 +97,7 @@ def parse(wd):
                 n = 1
             elif flag == 1:
                 if n == 0:
-                    if "FitBy = \"(protein)\"" in line:
+                    if 'FitBy = "(protein)"' in line:
                         flag = 2
                         n = 2
                     else:
@@ -110,7 +111,7 @@ def parse(wd):
                     break
                 else:
                     n -= 1
-    
+
     if rmsd:
         rmsd = np.array(rmsd, dtype=float)
         try:
@@ -121,35 +122,38 @@ def parse(wd):
             logger.error(f'Failed to get docking score from {sdf}')
         df = {'ligand': wd.name, 'score': score, 'rmsd': rmsd,
               'rmsd_min': np.min(rmsd), 'rmsd_max': np.max(rmsd)}
-        df = pd.DataFrame(df)
-        df.to_csv(output, index=False, float_format='%.6f')
-        df.to_csv('rmsd.csv', index=False, float_format='%.6f')
+        df = pd.DataFrame([df])
+        df.to_csv(output, index=False, float_format='%.4f')
+        df.to_csv('rmsd.csv', index=False, float_format='%.4f')
         logger.debug(f'Successfully saved rmsd results to ')
-        
+
         cmder.run(f'zip -r {args.sdf.with_suffix(".md.zip")} rmsd.csv md.eaf md-out.cms md_trj/', cwd=str(wd))
         if not args.debug:
             cmder.run(f'rm -r {wd}')
-    
+
     sdfs = wd.parent.glob('*.sdf')
     running, done = [], []
     for sdf in sdfs:
-        if sdf.with_suffix('.rmsd.csv').exists():
-            done.append(sdf)
+        out = sdf.with_suffix('.rmsd.csv')
+        if out.exists():
+            done.append(out)
         else:
             running.append(sdf)
-            
+
     if done and not running:
         logger.debug('All MD jobs are done, summarizing MD results ...\n')
         summary = args.summary or wd.parent / 'md.summary.csv'
-        cmder.run(f'cat *.rmsd.csv > {summary}', cwd=str(wd.parent))
+        df = [pd.read_csv(out) for out in done]
+        df = pd.concat(df)
+        df.to_csv(summary, index=False, float_format='%.4f')
         logger.debug(f'All done, MD summary was saved to {summary}\n')
     else:
         if running:
             logger.debug(f'The following {len(running)} SDF(s) are still processing or pending for processing:')
             for run in running:
                 logger.debug(f'  {run}')
-    
-        
+
+
 def main():
     if args.nodes:
         submit()

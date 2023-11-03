@@ -61,7 +61,8 @@ def main():
                         help="Residue numbers that interact with ligand via hydrogen bond")
     parser.add_argument('-o', '--output', help="Path to a SDF file for saving output poses",
                         default='interaction.pose.sdf')
-    parser.add_argument('-s', '--schrodinger', help='Path to Schrodinger Suite root directory')
+    parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
+                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
 
     args = parser.parse_args()
 

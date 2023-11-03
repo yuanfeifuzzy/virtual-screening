@@ -8,9 +8,11 @@ A command line tool for easily perform ligand-protein docking with variety docki
 import json
 import os
 import sys
+import time
 import argparse
 import traceback
 from pathlib import Path
+from datetime import timedelta
 
 import cmder
 import MolIO
@@ -18,6 +20,11 @@ import vstool
 from loguru import logger
 from rdkit import Chem
 from rdkit.Chem import Descriptors
+from rdkit import RDLogger
+from rdkit.rdBase import DisableLog
+
+_ = [DisableLog(level) for level in RDLogger._levels]
+
 
 parser = argparse.ArgumentParser(prog='docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
@@ -41,7 +48,7 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
 parser.add_argument('--md', help='Path to md executable, default: %(default)s',
                         type=vstool.check_exe, default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
 parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
@@ -62,7 +69,9 @@ vstool.setup_logger(verbose=True)
 
 def filtering(sdf, filters):
     try:
-        mol = next(Chem.SDMolSupplier(sdf, removeHs=False))
+        mol = next(Chem.SDMolSupplier(str(sdf), removeHs=False))
+        if not mol:
+            return
     except Exception as e:
         logger.error(f'Failed to read {sdf} deu to \n{e}\n\n{traceback.format_exc()}')
         return
@@ -111,15 +120,16 @@ def ligand_list(sdf, filters=None, debug=False):
     ligands, outdir = [], Path(sdf).parent
 
     for ligand in MolIO.parse_sdf(sdf):
-        out = outdir / f'{ligand.title}.sdf'
-        ligand.sdf(output=out)
-        if filters:
-            out = filtering(out, filters)
-        if out:
-            ligands.append(out)
-        # if debug and len(ligands) == 100:
-        #     logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
-        #     break
+        if ligand.mol:
+            out = outdir / f'{ligand.title}.sdf'
+            ligand.sdf(output=out)
+            if filters:
+                out = filtering(out, filters)
+            if out:
+                ligands.append(out)
+            # if debug and len(ligands) == 100:
+            #     logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
+            #     break
 
     with output.open('w') as o:
         o.writelines(f'{ligand}\n' for ligand in ligands)
@@ -132,10 +142,12 @@ def unidock(batch):
     cmd = (f'{args.exe} --receptor {args.receptor} '
            f'--ligand_index {batch} --search_mode balance --scoring vina '
            f'--center_x {cx} --center_y {cy} --center_z {cz} --size_x {sx} --size_y {sy} --size_z {sz} '
-           f'--dir {Path(batch).parent} &> /dev/null')
+           f'--dir {Path(batch).parent} &> {Path(batch).with_suffix(".log")}')
 
+    start = time.time()
     cmder.run(cmd)
-    logger.debug(f'Docking ligands in {batch} complete.\n')
+    t = str(timedelta(seconds=time.time() - start))
+    logger.debug(f'Docking ligands in {batch} complete in {t.split(".")[0]}.\n')
 
 
 def best_pose(sdf):
@@ -146,8 +158,11 @@ def best_pose(sdf):
                 ss.append(s)
                 
         if not args.debug:
-            os.unlink(sdf)
-            os.unlink(out)
+            try:
+                os.unlink(sdf)
+                os.unlink(out)
+            except Exception as e:
+                logger.debug(f'Failed to delete files after parse best pose due to {e}')
 
     ss = sorted(ss, key=lambda x: x.score)[0] if ss else None
     return ss
@@ -187,7 +202,7 @@ def post_docking(wd, pdb, top, residue, clusters, method, bits, schrodinger, md,
 
 def main():
     if args.filter:
-        filters = vstool.check_file(args.filters)
+        filters = vstool.check_file(args.filter)
         with open(filters) as f:
             filters = json.load(f)
     else:

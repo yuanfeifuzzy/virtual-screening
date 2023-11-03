@@ -102,8 +102,7 @@ def clustering(sdf, output='cluster.pose.sdf', n_clusters=1000, method='rdk5', b
         ss = sorted([s for s in ss if s.mol], key=lambda x: x.score)
         with open(output, 'w') as o:
             o.writelines(s.sdf(title=s.title.rsplit('_', 1)[0]) for s in ss)
-        # os.unlink(out)
-        print(out)
+        os.unlink(out)
         logger.debug(f'Successfully saved {len(ss):,} poses to {output}')
     return dd
 

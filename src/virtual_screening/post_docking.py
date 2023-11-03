@@ -32,7 +32,7 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
 
 parser.add_argument('--md', help='Path to md executable, default: %(default)s',
                     type=vstool.check_exe,
@@ -52,7 +52,7 @@ def concatenate_sdf():
     cmder.run(f'cat {args.wd}/*.docking.sdf > {sdf}')
     if not args.debug:
         cmder.run(f'rm {args.wd}/*.docking.sdf')
-    cmder.run(f'cp {sdf} > {Path(args.summary).parent / sdf}')
+    cmder.run(f'cp {sdf} {Path(args.summary).parent / sdf}')
     return sdf
 
 
@@ -76,7 +76,7 @@ def interaction_pose(sdf, out='interaction.pose.sdf'):
 
 
 def cluster_pose(sdf):
-    out, md, mds = 'cluster.pose.sdf', 'md.commands.txt', []
+    out, md, mds = 'cluster.pose.sdf', 'md/md.commands.txt', []
 
     num = sum(1 for _ in MolIO.parse_sdf(sdf))
     if num <= args.clusters:
@@ -96,7 +96,7 @@ def cluster_pose(sdf):
     for s in MolIO.parse_sdf(out):
         if s.mol:
             output = s.sdf(output=wd / f'{s.title}.sdf')
-            cmd = f'{program} {output} {args.pdb} --time {args.time} --exe {args.md}'
+            cmd = f'{program} {output} {args.pdb} --time {args.time} --exe {args.md} --schrodinger {args.schrodinger}'
             if args.summary:
                 cmd = f'{cmd} --summary {args.summary}'
             if args.debug:
@@ -104,8 +104,8 @@ def cluster_pose(sdf):
             mds.append(cmd)
 
     if mds and args.time:
-        with md.open('w') as o:
-            o.write(f'{x}\n' for x in mds)
+        with open(md, 'w') as o:
+            o.writelines(f'{x}\n' for x in mds)
 
 
 def main():

@@ -48,12 +48,13 @@ def main():
                         default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
     parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
     parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/08944/fuzzy/share/software/DESRES/2023.2')
+                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
     parser.add_argument('--md', help='Path to md executable, default: %(default)s',
                         type=vstool.check_exe, default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
     parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 
     parser.add_argument('--nodes', type=int, default=8, help="Number of nodes, default: %(default)s.")
+    parser.add_argument('--project', help='The nmme of project you would like to be charged')
     parser.add_argument('--email', help='Email address for send status change emails')
     parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
                         default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
@@ -101,7 +102,8 @@ def main():
                                  nodes=1, job_name='batch.ligand', hour=1, minute=30,
                                  partition='flex' if 'frontera' in hostname else 'vm-small',
                                  email=args.email, mail_type=args.email_type,
-                                 log='vs.log', mode='append', script=args.outdir / 'batch.ligand.sh', delay=args.delay)
+                                 log='vs.log', mode='append', script=args.outdir / 'batch.ligand.sh',
+                                 delay=args.delay, project=args.project)
 
     lcmd = ['module load launcher_gpu', 'export LAUNCHER_WORKDIR={outdir}',
             'export LAUNCHER_JOB_FILE={outdir}/{job}.commands.txt', '',
@@ -113,10 +115,7 @@ def main():
                                  partition=gpu_queue,
                                  email=args.email, mail_type=args.email_type,
                                  log='vs.log', mode='append', script=args.outdir / 'docking.sh',
-                                 dependency=f'afterok:{job_id}', delay=args.delay)
-    
-    if args.docking_only:
-        vs.debug_and_exit('Exit without submitting MD task due to docking only flag was set')
+                                 dependency=f'afterok:{job_id}', delay=args.delay, project=args.project)
 
     if not job_id:
         vstool.error_and_eixt('Failed to submit docking job, cannot continue', ta=args.task, status=-5)
@@ -130,7 +129,11 @@ def main():
     code, job_id = vstool.submit(cmding(env, cmd, args), nodes=1, job_name='post.docking',
                                  hour=1, minute=50, partition='flex' if 'frontera' in hostname else 'vm-small',
                                  email=args.email, mail_type=args.email_type, log='vs.log', mode='append',
-                                 script=args.outdir / 'post.docking.sh', dependency=f'afterok:{job_id}')
+                                 script=args.outdir / 'post.docking.sh', dependency=f'afterok:{job_id}',
+                                 delay=args.delay, project=args.project)
+
+    if args.docking_only:
+        vs.debug_and_exit('Exit without submitting MD task due to docking only flag was set')
     
     outdir = vstool.mkdir(args.scratch / 'md')
     vstool.submit('\n'.join(lcmd).format(outdir=str(outdir), job='md'),
@@ -139,7 +142,7 @@ def main():
                   partition=gpu_queue,
                   email=args.email, mail_type=args.email_type,
                   log='vs.log', mode='append', script=args.outdir / 'md.sh',
-                  dependency=f'afterok:{job_id}', delay=args.delay)
+                  dependency=f'afterok:{job_id}', delay=args.delay, project=args.project)
 
 
 if __name__ == '__main__':

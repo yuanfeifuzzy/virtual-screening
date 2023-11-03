@@ -32,6 +32,10 @@ workdir=${1}
 in_mae_complex=${2}
 md_time=${3}
 
+tmpdir="${workdir}/tmp"
+mkdir -p "${tmpdir}"
+export SCHRODINGER_TMPDIR="${tmpdir}"
+
 md_msj=$workdir/md.msj
 md_cfg=$workdir/md.cfg
 md_out=$workdir/md_out.cms
@@ -43,7 +47,7 @@ sys_build_out=$workdir/sys.cms
 mkdir -p "$workdir"
 cd "$workdir" || exit 1
 
-Desmond="${Desmond:=/work/08944/fuzzy/share/software/DESRES/2023.2}"
+Desmond="${Desmond:=/work/02940/ztan818/ls6/software/DESRES/2023.2}"
 
 # Step 1: system building
 # write msj files
@@ -78,7 +82,8 @@ assign_forcefield {
 EOF
 
 # run system building
-"${Desmond}/utilities/multisim" -JOBNAME md_setup -maxjob 1 -m "$sys_build_msj" "$in_mae_complex" -o "$sys_build_out" -WAIT
+"${Desmond}/utilities/multisim" -JOBNAME md_setup -maxjob 1 -m "$sys_build_msj" "$in_mae_complex" \
+  -o "$sys_build_out" -WAIT
 
 cd "$workdir" || exit
 # Step 2: md simulation
@@ -285,5 +290,4 @@ EOF
   -mode umbrella \
   -o "$md_out" \
   -lic DESMOND_ACADEMIC:16 \
-  -debug \
   -WAIT
