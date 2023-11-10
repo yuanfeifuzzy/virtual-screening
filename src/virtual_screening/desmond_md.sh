@@ -35,6 +35,8 @@ md_time=${3}
 tmpdir="${workdir}/tmp"
 mkdir -p "${tmpdir}"
 export SCHRODINGER_TMPDIR="${tmpdir}"
+sleep ${RANDOM:0:2}
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 
 md_msj=$workdir/md.msj
 md_cfg=$workdir/md.cfg
@@ -263,14 +265,14 @@ taper = false
 temperature = [
    [300.0 0 ]
 ]
-time = ${md_time}000
+time = ${md_time}
 timestep = [0.002 0.002 0.006 ]
 trajectory = {
    center = []
    first = 0.0
    format = dtr
    frames_per_file = 250
-   interval = $md_time
+   interval = 100
    name = "\$JOBNAME\$[_replica\$REPLICA\$]_trj"
    periodicfix = true
    write_last_vel = false

@@ -19,37 +19,17 @@ from loguru import logger
 
 parser = argparse.ArgumentParser(prog='batch-ligand', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a single SDF file contains prepared ligands", type=vstool.check_file)
-parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
-parser.add_argument('wd', help="Path to work directory", type=vstool.check_dir)
-parser.add_argument('-o', '--outdir', default='.', help="Path to a directory for saving output files",
-                    type=vstool.mkdir, required=True)
-parser.add_argument('-b', '--batch', type=int, help="Number of batches that the SDF will be split to, "
-                                                    "default: %(default)s", default=8, required=True)
-parser.add_argument('-c', '--center', help="The X, Y, and Z coordinates of the center",
+parser.add_argument('pdb', help="Path to the receptor in PDB format file", type=vstool.check_file)
+parser.add_argument('--outdir',help="Path to a directory for saving output files", type=vstool.mkdir)
+parser.add_argument('--batch', type=int, help="Number of batches that the SDF will be split to, "
+                                                    "default: %(default)s", default=8)
+parser.add_argument('--center', help="The X, Y, and Z coordinates of the center",
                     type=float, nargs='+', required=True)
 
-parser.add_argument('-f', '--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
-parser.add_argument('-y', '--filter', help="Path to a JSON file contains descriptor filters")
+parser.add_argument('--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
+parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
                     type=int, nargs='*', default=[15, 15, 15])
-
-parser.add_argument('--pdb', help="Path to a PDB file contains receptor structure", type=vstool.check_file)
-parser.add_argument('--residue', nargs='*', type=int,
-                    help="Residue numbers that interact with ligand via hydrogen bond")
-parser.add_argument('--top', help="Percentage of top poses need to be retained for "
-                                  "downstream analysis, default: %(default)s", type=float, default=10)
-parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
-                                       "default: %(default)s", type=int, default=1000)
-parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
-                    default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
-parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
-parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
-parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
-parser.add_argument('--md', help='Path to md executable, default: %(default)s',
-                    type=vstool.check_exe,
-                    default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
-parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 
@@ -60,30 +40,29 @@ vstool.setup_logger(verbose=True)
 def main():
     logger.debug(f'Splitting {args.ligand} into {args.batch} batches ...')
     batches = MolIO.batch_sdf(args.ligand, args.batch, args.outdir / 'batch.')
+    logger.debug(f'Successfully split {args.ligand} into {len(batches)} batches ...')
 
     (cx, cy, cz), (sx, sy, sz), cmds = args.center, args.size, []
+    center, size = f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}'
     program = Path(vstool.check_exe("python")).parent / 'docking'
-    
-    with args.wd.joinpath('docking.commands.txt').open('w') as o:
+    pdbqt = args.outdir / 'receptor' / f'{args.pdb.name}qt'
+    if not pdbqt.exists():
+        cmder.run(f'receptor-preparation {args.pdb} {center} {size} --outdir {pdbqt.parent}', exit_on_error=True)
+
+    output = args.outdir.joinpath('docking.commands.txt')
+    with output.open('w') as o:
         for batch in batches:
-            cmd = f'{program} {batch} {args.receptor} --center {cx} {cy} {cz} --size {sx} {sy} {sz}'
+            cmd = f'{program} {batch} {pdbqt} {center} {size} --outdir {args.outdir}'
             if args.flexible:
                 cmd = f'{cmd} --flexible {args.flexible}'
             if args.filter:
                 cmd = f'{cmd} --filter {args.filter}'
-            
-            if args.pdb:
-                cmd = (f'{cmd} --pdb {args.pdb} --top {args.top} --cluster {args.clusters} '
-                       f'--method {args.method} --bits {args.bits} --schrodinger {args.schrodinger}')
-                if args.residue:
-                    cmd = f'{cmd} --residue {" ".join(str(x) for x in args.residue)}'
-                if args.summary:
-                    cmd = f'{cmd} --summary {args.summary} --md {args.md} --time {args.time}'
-                    
             if args.debug:
                 cmd = f'{cmd} --debug'
             cmds.append(cmd)
+        cmds = cmds[:8] if args.debug else cmds
         o.writelines(f'{cmd}\n' for cmd in cmds)
+    logger.debug(f'Successfully saved the following {len(cmds)} into {output}')
 
 
 if __name__ == '__main__':

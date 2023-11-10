@@ -17,7 +17,6 @@ from datetime import timedelta
 import cmder
 import MolIO
 import vstool
-from loguru import logger
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit import RDLogger
@@ -25,46 +24,21 @@ from rdkit.rdBase import DisableLog
 
 _ = [DisableLog(level) for level in RDLogger._levels]
 
-
 parser = argparse.ArgumentParser(prog='docking', description=__doc__.strip())
 parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
-parser.add_argument('receptor', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
+parser.add_argument('pdbqt', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
 parser.add_argument('--center', help="The X, Y, and Z coordinates of the center", type=float, nargs='+')
 parser.add_argument('--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
 parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
                     type=int, nargs='*', default=[15, 15, 15])
-parser.add_argument('--exe', help="Path to docking program executable, default: %(default)s",
-                    type=vstool.check_exe, default='/work/08944/fuzzy/share/software/Uni-Dock/bin/unidock')
-
-parser.add_argument('--pdb', help="Path to a PDB file contains receptor structure", type=vstool.check_file)
-parser.add_argument('--residue', nargs='*', type=int,
-                    help="Residue numbers that interact with ligand via hydrogen bond")
-parser.add_argument('--top', help="Percentage of top poses need to be retained for "
-                                  "downstream analysis, default: %(default)s", type=float, default=10)
-parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
-                                       "default: %(default)s", type=int, default=1000)
-parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
-                    default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
-parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
-parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
-                        type=vstool.check_dir, default='/work/02940/ztan818/ls6/software/DESRES/2023.2')
-parser.add_argument('--md', help='Path to md executable, default: %(default)s',
-                        type=vstool.check_exe, default='/work/08944/fuzzy/share/software/virtual-screening/venv/lib/python3.11/site-packages/virtual_screening/desmond_md.sh')
-parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
-parser.add_argument('--summary', help='Path to a CSV file for saving MD summary results.')
-
-parser.add_argument('--nodes', type=int, default=0, help="Number of nodes, default: %(default)s.")
-parser.add_argument('--email', help='Email address for send status change emails')
-parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
-                    default='ALL', choices=('NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'))
-parser.add_argument('--delay', help='Hours need to delay running the job.', type=int, default=0)
+parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
-vstool.setup_logger(verbose=True)
+logger = vstool.setup_logger(verbose=True)
 
 
 def filtering(sdf, filters):
@@ -117,72 +91,79 @@ def filtering(sdf, filters):
 def ligand_list(sdf, filters=None, debug=False):
     logger.debug(f'Parsing {sdf} into individual files')
     output = Path(sdf).with_suffix('.txt')
-    ligands, outdir = [], Path(sdf).parent
+    ligands, outdir = [], vstool.mkdir(Path(sdf).with_suffix(''))
 
     for ligand in MolIO.parse_sdf(sdf):
         if ligand.mol:
-            out = outdir / f'{ligand.title}.sdf'
-            ligand.sdf(output=out)
+            out = ligand.sdf(output=outdir / f'{ligand.title}.sdf')
             if filters:
                 out = filtering(out, filters)
             if out:
                 ligands.append(out)
-            # if debug and len(ligands) == 100:
-            #     logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
-            #     break
+                if debug and len(ligands) == 100:
+                    logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
+                    break
 
     with output.open('w') as o:
         o.writelines(f'{ligand}\n' for ligand in ligands)
+    logger.debug(f'Successfully saved {len(ligands):,} ligands into individual SDF files')
     return output, ligands
 
 
 def unidock(batch):
-    logger.debug(f'Docking ligands in {batch} ...')
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
-    cmd = (f'{args.exe} --receptor {args.receptor} '
-           f'--ligand_index {batch} --search_mode balance --scoring vina '
+    cmd = (f'/work/08944/fuzzy/share/software/Uni-Dock/bin/unidock --receptor {args.pdbqt} '
+           f'--ligand_index {batch} --search_mode balance --scoring vina --max_gpu_memory 32000 --cpu 16 '
            f'--center_x {cx} --center_y {cy} --center_z {cz} --size_x {sx} --size_y {sy} --size_z {sz} '
-           f'--dir {Path(batch).parent} &> {Path(batch).with_suffix(".log")}')
+           f'--dir {Path(batch).with_suffix("")} &> {Path(batch).with_suffix(".log")}')
 
-    start = time.time()
     cmder.run(cmd)
-    t = str(timedelta(seconds=time.time() - start))
-    logger.debug(f'Docking ligands in {batch} complete in {t.split(".")[0]}.\n')
 
 
 def best_pose(sdf):
     ss, out = [], Path(f'{Path(sdf).with_suffix("")}_out.sdf')
     if out.exists():
-        for s in MolIO.parse(str(out)):
-            if s.mol and s.score < 0:
-                ss.append(s)
-                
-        if not args.debug:
-            try:
-                os.unlink(out)
-            except Exception as e:
-                logger.debug(f'Failed to delete files after parse best pose due to {e}')
-
-    if not args.debug:
         try:
-            os.unlink(sdf)
+            for s in MolIO.parse(str(out)):
+                if s and s.mol and s.score < 0:
+                    ss.append(s)
         except Exception as e:
-            logger.debug(f'Failed to delete files after parse best pose due to {e}')
+            logger.error(f'Failed to parse {sdf} due to {e}')
+    if not args.debug:
+        cmder.run(f'rm -f {sdf} {out}', log_cmd=False)
+        # try:
+        #     for s in MolIO.parse(str(out)):
+        #         if s and s.mol and s.score < 0:
+        #             ss.append(s)
+    #         os.unlink(out)
+    #     except Exception as e:
+    #         logger.debug(f'Failed to parse best pose in {out} due to {e}')
+    #
+    # if not args.debug:
+    #     try:
+    #         os.unlink(sdf)
+    #     except Exception as e:
+    #         logger.debug(f'Failed to delete {sdf} after parse best pose due to {e}')
 
     ss = sorted(ss, key=lambda x: x.score)[0] if ss else None
     return ss
 
 
 def main():
+    start = time.time()
     if args.filter:
-        filters = vstool.check_file(args.filter)
-        with open(filters) as f:
+        with open(vstool.check_file(args.filter)) as f:
             filters = json.load(f)
     else:
         filters = None
     
     batch, ligands = ligand_list(args.ligand, filters=filters, debug=args.debug)
+
+    logger.debug(f'Docking {len(ligands):,} ligands in {batch} ...')
+    s = time.time()
     unidock(batch)
+    t = str(timedelta(seconds=time.time() - s))
+    logger.debug(f'Docking {len(ligands):,} ligands in {batch} complete in {t.split(".")[0]}.\n')
     
     logger.debug(f'Getting docking poses and scores ...')
     poses = vstool.parallel_cpu_task(best_pose, ligands)
@@ -197,8 +178,11 @@ def main():
         output = str(args.ligand.with_suffix('.docking.sdf'))
         logger.debug(f'Saving poses to {output} ...')
         MolIO.write(poses, output)
-        MolIO.write(poses, Path(args.summary).parent / 'docking.sdf')
+        MolIO.write(poses, args.outdir / 'docking.sdf')
         logger.debug(f'Successfully saved {len(poses):,} poses to {output}.\n')
+    
+    t = str(timedelta(seconds=time.time() - start))
+    logger.debug(f'Docking and parse score for {args.ligand} complete in {t.split(".")[0]}.\n')
 
 
 if __name__ == '__main__':
