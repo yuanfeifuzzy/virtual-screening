@@ -38,8 +38,6 @@ parser.add_argument('--method', help="Method for generating fingerprints, defaul
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
 parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 parser.add_argument('--time', type=float, default=50, help="MD simulation time, default: %(default)s ns.")
-parser.add_argument('--batch', type=int, help="Number of batches that the ligands will be split to, "
-                                                    "default: %(default)s", default=0)
 
 parser.add_argument('--nodes', type=int, default=8, help="Number of nodes, default: %(default)s.")
 parser.add_argument('--project', help='The nmme of project you would like to be charged')
@@ -49,7 +47,6 @@ parser.add_argument('--email-type', help='Email type for send status change emai
 parser.add_argument('--delay', help='Hours need to delay running the job.', type=int, default=0)
 parser.add_argument('--hold', help='Only generate submit script but hold for submitting', action='store_true')
 
-parser.add_argument('--docking-only', help='Only perform docking and post-docking and no MD.', action='store_true')
 parser.add_argument('--separate', help='Separate docking and MD into 2 steps', action='store_true')
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
@@ -63,7 +60,6 @@ if args.summary.exists():
 
 setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}'))
 setattr(args, 'nodes', 1 if args.debug else args.nodes)
-setattr(args, 'batch', 400)
 
 
 def str_cmd(cmd):
@@ -85,8 +81,7 @@ def main():
 
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
     batching = ['batch-ligand', str(args.ligand), str(args.pdb),
-           f'--outdir {args.scratch}', f'--batch {args.batch}',
-           f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}']
+           f'--outdir {args.scratch}', f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}']
     if args.filter:
         batching.append(f'--filter {args.filter}')
     if args.flexible:
@@ -110,14 +105,7 @@ def main():
     md = '\n'.join(lcmd).format(outdir=str(args.scratch), job='md')
     post_md =f'post-md {args.outdir} {args.summary.name} --scratch {args.scratch}'
     
-    if args.docking_only:
-        vstool.submit('\n\n'.join([source, cd, batching, launcher, docking, post_docking]),
-                      nodes=args.nodes, ntasks_per_node=ntasks_per_node, ntasks=ntasks, job_name='docking',
-                      hour=1 if args.debug else 11, minute=59, partition=queue,
-                      email=args.email, mail_type=args.email_type, log='docking.log',
-                      script=args.outdir / 'docking.sh', delay=args.delay,
-                      project=args.project, hold=args.hold)
-    else:
+    if args.time:
         if args.separate:
             _, job_id = vstool.submit('\n\n'.join([source, cd, batching, launcher, docking, post_docking]),
                                       nodes=args.nodes, ntasks_per_node=ntasks_per_node,
@@ -140,7 +128,13 @@ def main():
                           day=0 if args.debug else 1, hour=1 if args.debug else 23, minute=59, partition=queue,
                           email=args.email, mail_type=args.email_type, log='vs.log',
                           script=args.outdir / 'vs.sh', delay=args.delay, project=args.project, hold=args.hold)
-    
+    else:
+        vstool.submit('\n\n'.join([source, cd, batching, launcher, docking, post_docking]),
+                      nodes=args.nodes, ntasks_per_node=ntasks_per_node, ntasks=ntasks, job_name='docking',
+                      hour=1 if args.debug else 11, minute=59, partition=queue,
+                      email=args.email, mail_type=args.email_type, log='docking.log',
+                      script=args.outdir / 'docking.sh', delay=args.delay,
+                      project=args.project, hold=args.hold)
 
 if __name__ == '__main__':
     main()
