@@ -52,6 +52,7 @@ parser.add_argument('--version', version=vstool.get_version(__package__), action
 args = parser.parse_args()
 logger = vstool.setup_logger(verbose=True)
 setattr(args, 'scratch', vstool.mkdir(args.scratch / f'{args.outdir.name}'))
+setattr(args, 'time', 1 if args.debug else args.time)
 
 md = Path(vstool.check_exe("python")).parent / 'molecule-dynamics'
 desmond_md = Path(__file__).parent / 'desmond_md.sh'
