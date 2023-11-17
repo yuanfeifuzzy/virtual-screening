@@ -21,6 +21,8 @@ parser = argparse.ArgumentParser(prog='batch-ligand', description=__doc__.strip(
 parser.add_argument('ligand', help="Path to a single SDF file contains prepared ligands", type=vstool.check_file)
 parser.add_argument('pdb', help="Path to the receptor in PDB format file", type=vstool.check_file)
 parser.add_argument('--outdir',help="Path to a directory for saving output files", type=vstool.mkdir)
+parser.add_argument('-b', '--batch', type=int, help="Number of batches that the SDF will be split to, "
+                                                    "default: %(default)s", default=8, required=True)
 parser.add_argument('--center', help="The X, Y, and Z coordinates of the center",
                     type=float, nargs='+', required=True)
 
@@ -37,7 +39,7 @@ vstool.setup_logger(verbose=True)
 
 def main():
     logger.debug(f'Splitting {args.ligand} into batches ...')
-    batches = MolIO.split_sdf(args.ligand, args.outdir / 'batch.', records=3000)
+    batches = MolIO.batch_sdf(args.ligand, args.batch, args.outdir / 'batch.')
     logger.debug(f'Successfully split {args.ligand} into {len(batches)} batches ...')
 
     (cx, cy, cz), (sx, sy, sz), cmds = args.center, args.size, []

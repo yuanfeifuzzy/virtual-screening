@@ -32,13 +32,20 @@ parser.add_argument('--flexible', help="Path to prepared flexible receptor file 
 parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
                     type=int, nargs='*', default=[15, 15, 15])
-parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
+parser.add_argument('--outdir', help="Path to a directory for saving output files")
 
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
 logger = vstool.setup_logger(verbose=True)
+setattr(args, 'outdir', vstool.mkdir(args.outdir) if args.outdir else args.ligand.parent)
+
+
+def batch_ligand(sdf):
+    outdir = vstool.mkdir(sdf.with_suffix(''))
+    batches = MolIO.split_sdf(str(sdf), outdir / 'batch.', records=2500)
+    return batches, outdir
 
 
 def filtering(sdf, filters):
@@ -98,10 +105,13 @@ def ligand_list(sdf, filters=None, debug=False):
             out = ligand.sdf(output=outdir / f'{ligand.title}.sdf')
             if filters:
                 out = filtering(out, filters)
+                message = f'Debug mode enabled, only first 100 ligands passed filters in {sdf} will be docked'
+            else:
+                message = f'Debug mode enabled, only first 100 ligands in {sdf} will be docked'
             if out:
                 ligands.append(out)
                 if debug and len(ligands) == 100:
-                    logger.debug(f'Debug mode enabled, only first 100 ligands passed filters in {sdf} were saved')
+                    logger.debug(message)
                     break
 
     with output.open('w') as o:
@@ -117,7 +127,8 @@ def unidock(batch):
            f'--center_x {cx} --center_y {cy} --center_z {cz} --size_x {sx} --size_y {sy} --size_z {sz} '
            f'--dir {Path(batch).with_suffix("")} &> {Path(batch).with_suffix(".log")}')
 
-    cmder.run(cmd)
+    p = cmder.run(cmd)
+    return p.returncode
 
 
 def best_pose(sdf):
@@ -131,58 +142,59 @@ def best_pose(sdf):
             logger.error(f'Failed to parse {sdf} due to {e}')
     if not args.debug:
         cmder.run(f'rm -f {sdf} {out}', log_cmd=False)
-        # try:
-        #     for s in MolIO.parse(str(out)):
-        #         if s and s.mol and s.score < 0:
-        #             ss.append(s)
-    #         os.unlink(out)
-    #     except Exception as e:
-    #         logger.debug(f'Failed to parse best pose in {out} due to {e}')
-    #
-    # if not args.debug:
-    #     try:
-    #         os.unlink(sdf)
-    #     except Exception as e:
-    #         logger.debug(f'Failed to delete {sdf} after parse best pose due to {e}')
 
     ss = sorted(ss, key=lambda x: x.score)[0] if ss else None
     return ss
 
 
 def main():
-    start = time.time()
-    if args.filter:
-        with open(vstool.check_file(args.filter)) as f:
-            filters = json.load(f)
+    output = args.outdir / args.ligand.with_suffix('.docking.sdf').name
+    if output.exists():
+        logger.debug(f'Docking output for {args.ligand} already exists')
     else:
-        filters = None
-    
-    batch, ligands = ligand_list(args.ligand, filters=filters, debug=args.debug)
 
-    logger.debug(f'Docking {len(ligands):,} ligands in {batch} ...')
-    s = time.time()
-    unidock(batch)
-    t = str(timedelta(seconds=time.time() - s))
-    logger.debug(f'Docking {len(ligands):,} ligands in {batch} complete in {t.split(".")[0]}.\n')
-    
-    logger.debug(f'Getting docking poses and scores ...')
-    poses = vstool.parallel_cpu_task(best_pose, ligands)
-    logger.debug(f'Getting docking poses and scores complete.')
-    
-    logger.debug(f'Sorting poses and scores ...')
-    poses = (pose for pose in poses if pose)
-    poses = sorted(poses, key=lambda x: x.score)
-    logger.debug(f'Sorting {len(poses):,} poses with scores complete.')
-    
-    if poses:
-        output = str(args.ligand.with_suffix('.docking.sdf'))
-        logger.debug(f'Saving poses to {output} ...')
-        MolIO.write(poses, output)
-        MolIO.write(poses, args.outdir / 'docking.sdf')
-        logger.debug(f'Successfully saved {len(poses):,} poses to {output}.\n')
-    
-    t = str(timedelta(seconds=time.time() - start))
-    logger.debug(f'Docking and parse score for {args.ligand} complete in {t.split(".")[0]}.\n')
+        if args.filter:
+            with open(vstool.check_file(args.filter)) as f:
+                filters = json.load(f)
+        else:
+            filters = None
+
+        outdir, outs = vstool.mkdir(args.ligand.with_suffix('')), []
+        batches = MolIO.split_sdf(str(args.ligand), outdir / 'batch.', records=2500)
+        keep = 0
+
+        for i, batch in enumerate(batches):
+            indices, ligands = ligand_list(batch, filters=filters, debug=args.debug)
+            if ligands:
+                logger.debug(f'Docking ligands in {batch}')
+                p = unidock(indices)
+                if p:
+                    keep = p
+                processes = min(len(ligands), 32)
+                poses = vstool.parallel_cpu_task(best_pose, ligands, processes=processes)
+                poses = (pose for pose in poses if pose)
+                poses = sorted(poses, key=lambda x: x.score)
+
+                if poses:
+                    out = MolIO.write(poses, str(Path(batch).with_suffix('.docking.sdf')))
+                    outs.append(out)
+                    logger.debug(f'Successfully saved {len(poses):,} poses to {out}.')
+                else:
+                    logger.debug(f'No pose was saved to docking output for batch {batch}')
+            else:
+                logger.debug(f'No ligands was found in batch {batch}')
+
+            if args.debug and i == 3:
+                break
+
+        with open(output, 'w') as o:
+            for out in outs:
+                with open(out) as f:
+                    o.write(f.read())
+        logger.debug(f'Docking results for {args.ligand} was saved to {output}')
+
+        if not args.debug and not keep:
+            cmder.run(f'rm -r {outdir}')
 
 
 if __name__ == '__main__':
