@@ -1,6 +1,6 @@
-# smart-virtual-screening
+# Virtual Screening
 
-A pipeline for smartly perform virtual screening
+A pipeline for smartly performing virtual screening
 
 # Example
 ```shell

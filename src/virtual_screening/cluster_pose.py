@@ -4,7 +4,7 @@
 """
 Cluster poses using k-mean clusters
 """
-
+import gzip
 import os
 import argparse
 import subprocess
@@ -77,8 +77,10 @@ def main():
             o.writelines(pose.sdf(title=pose.title.rsplit('_', 1)[0]) for pose in MolIO.parse_sdf(args.sdf))
     else:
         fp, names = [], []
-        with Chem.SDMolSupplier(str(args.sdf), removeHs=False) as f:
-            mol = ((m, m.GetProp('_Name')) for m in f if m)
+        opener = gzip.open if args.sdf.name.endswith('.gz') else open
+        with opener(args.sdf, 'rt') as f:
+            supplier = Chem.SDMolSupplier(f, removeHs=False)
+            mol = ((m, m.GetProp('_Name')) for m in supplier if m)
 
             processes = cpu_count()
             logger.debug(f'Generating fingerprints using {args.method} method with {processes} CPUs')

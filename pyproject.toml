@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "virtual_screening"
+name = "vs"
 version = "0.0.1"
 authors = [
     {name="FEI YUAN", email="fei.yuan@bcm.edu"},
@@ -20,22 +20,20 @@ classifiers = [
 ]
 dependencies = [
     'cmder',
-    'loguru',
     'rdkit',
     'numpy',
     'scipy',
     'pandas',
     'scikit-learn',
-    'pandarallel'
 ]
 [tool.setuptools.package-data]
 "*" = ["*.sh"]
 [project.scripts]
-batch-ligand = "virtual_screening.batch_ligand:main"
-cluster-pose = "virtual_screening.cluster_pose:main"
-docking = "virtual_screening.docking:main"
-interaction-pose = "virtual_screening.interaction_pose:main"
-molecule-dynamics = "virtual_screening.molecule_dynamics:main"
-post-docking = "virtual_screening.post_docking:main"
-post-md = "virtual_screening.post_md:main"
-virtual-screening = "virtual_screening.virtual_screening:main"
+vs-batch-ligand = "vs.batch_ligand:main"
+vs-cluster-pose = "vs.cluster_pose:main"
+vs-docking = "vs.docking:main"
+vs-interaction-pose = "vs.interaction_pose:main"
+vs-molecule-dynamics = "vs.molecule_dynamics:main"
+vs-post-docking = "vs.post_docking:main"
+vs-post-md = "vs.post_md:main"
+vs = "vs.virtual_screening:main"

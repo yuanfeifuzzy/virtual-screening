@@ -28,6 +28,8 @@ parser.add_argument('--residue', nargs='*', type=int,
                     help="Residue numbers that interact with ligand via hydrogen bond")
 parser.add_argument('--output', help="Path to a SDF file for saving output poses",
                     default='interaction.pose.sdf')
+parser.add_argument('--desmond', help="Path to Desmon installation directory",
+                    default='/work/02940/ztan818/ls6/software/DESRES/2023.2', type=vstool.check_dir)
 
 args = parser.parse_args()
 logger = vstool.setup_logger(verbose=True)
@@ -41,11 +43,10 @@ def main():
         os.chdir(args.sdf.parent)
         if args.residue:
             receptor, pose, view, out, log = 'receptor.mae', 'pose.mae', 'view.mae', 'view.sdf', 'interaction.pose.log'
-            run = '/work/02940/ztan818/ls6/software/DESRES/2023.2/run'
-            structconvert = '/work/02940/ztan818/ls6/software/DESRES/2023.2/utilities/structconvert'
+            run, struct_convert = f'{args.desmond}/run', f'{args.desmond}/utilities/structconvert'
             try:
-                cmder.run(f'{structconvert} {args.pdb} {receptor}', exit_on_error=True)
-                cmder.run(f'{structconvert} {args.sdf} {pose}', exit_on_error=True)
+                cmder.run(f'{struct_convert} {args.pdb} {receptor}', exit_on_error=True)
+                cmder.run(f'{struct_convert} {args.sdf} {pose}', exit_on_error=True)
                 cmder.run(f'cat {receptor} {pose} > {view}', exit_on_error=True)
 
                 options = ' '.join([f"-asl 'res.num {n}' -hbond {i}" for i, n in enumerate(args.residue, 1)])

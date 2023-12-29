@@ -4,10 +4,11 @@
 """
 A command line tool for easily perform ligand-protein docking with variety docking software
 """
-
+import gzip
 import json
 import os
 import sys
+import tempfile
 import time
 import argparse
 import traceback
@@ -25,21 +26,23 @@ from rdkit.rdBase import DisableLog
 _ = [DisableLog(level) for level in RDLogger._levels]
 
 parser = argparse.ArgumentParser(prog='docking', description=__doc__.strip())
-parser.add_argument('ligand', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
+parser.add_argument('sdf', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
 parser.add_argument('pdbqt', help="Path to prepared rigid receptor in .pdbqt format file", type=vstool.check_file)
-parser.add_argument('--center', help="The X, Y, and Z coordinates of the center", type=float, nargs='+')
+parser.add_argument('--center', help="The X, Y, and Z coordinates of the center", type=float, nargs=3)
 parser.add_argument('--flexible', help="Path to prepared flexible receptor file in .pdbqt format")
-parser.add_argument('--filter', help="Path to a JSON file contains descriptor filters")
 parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
-                    type=int, nargs='*', default=[15, 15, 15])
-parser.add_argument('--outdir', help="Path to a directory for saving output files")
+                    type=int, nargs=3, default=[15, 15, 15])
+parser.add_argument('--output', help="Path to a directory for saving output files")
 
+parser.add_argument('--quiet', help='Enable quiet mode.', action='store_true')
+parser.add_argument('--verbose', help='Enable verbose mode.', action='store_true')
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
 logger = vstool.setup_logger(verbose=True)
-setattr(args, 'outdir', vstool.mkdir(args.outdir) if args.outdir else args.ligand.parent)
+setattr(args, 'output', Path(args.output) if args.output else args.sdf.with_suffix('.docking.sdf.gz'))
+setattr(args, 'outdir', vstool.mkdir(args.output.parent))
 
 
 def batch_ligand(sdf):
@@ -48,74 +51,19 @@ def batch_ligand(sdf):
     return batches, outdir
 
 
-def filtering(sdf, filters):
-    try:
-        mol = next(Chem.SDMolSupplier(str(sdf), removeHs=False))
-        if not mol:
-            return
-    except Exception as e:
-        logger.error(f'Failed to read {sdf} deu to \n{e}\n\n{traceback.format_exc()}')
-        return
-
-    mw = Descriptors.MolWt(mol)
-    if mw == 0 or mw < filters['min_mw'] or mw >= filters['max_mw']:
-        return
-
-    hba = Descriptors.NOCount(mol)
-    if hba > filters['hba']:
-        return
-
-    hbd = Descriptors.NHOHCount(mol)
-    if hbd > filters['hbd']:
-        return
-
-    logP = Descriptors.MolLogP(mol)
-    if logP < filters['min_logP'] or logP > filters['max_logP']:
-        return
-
-    # https://www.rdkit.org/docs/GettingStartedInPython.html#lipinski-rule-of-5
-    lipinski_violation = sum([mw <= 500, hba <= 10, hbd <= 5, logP <= 5])
-    if lipinski_violation < 3:
-        return
-
-    ds = Descriptors.CalcMolDescriptors(mol)
-    num_chiral_center = len(Chem.FindMolChiralCenters(mol, includeUnassigned=True, useLegacyImplementation=True))
-    if num_chiral_center > filters["chiral_center"]:
-        return
-
-    if ds.get('NumRotatableBonds', 0) > filters['rotatable_bound_number']:
-        return
-
-    if ds.get('TPSA', 0) > filters['tpsa']:
-        return
-
-    if ds.get('qed', 0) > filters['qed']:
-        return
-
-    return sdf
-
-
-def ligand_list(sdf, filters=None, debug=False):
+def ligand_list(sdf, debug=False):
     logger.debug(f'Parsing {sdf} into individual files')
     output = Path(sdf).with_suffix('.txt')
     ligands, outdir = [], vstool.mkdir(Path(sdf).with_suffix(''))
 
     for ligand in MolIO.parse_sdf(sdf):
         if ligand.mol:
-            out = ligand.sdf(output=outdir / f'{ligand.title}.sdf')
-            if filters:
-                out = filtering(out, filters)
-                message = f'Debug mode enabled, only first 100 ligands passed filters in {sdf} will be docked'
-            else:
-                message = f'Debug mode enabled, only first 100 ligands in {sdf} will be docked'
-            if out:
-                ligands.append(out)
-                if debug and len(ligands) == 100:
-                    logger.debug(message)
-                    break
+            ligands.append(ligand.sdf(output=outdir / f'{ligand.title}.sdf'))
+            if debug and len(ligands) == 100:
+                break
 
     with output.open('w') as o:
-        o.writelines(f'{ligand}\n' for ligand in ligands)
+        o.writelines(f'{ligand}\n' for ligand in ligands if ligand)
     logger.debug(f'Successfully saved {len(ligands):,} ligands into individual SDF files')
     return output, ligands
 
@@ -148,50 +96,43 @@ def best_pose(sdf):
 
 
 def main():
-    output = args.outdir / args.ligand.with_suffix('.docking.sdf').name
-    if output.exists():
-        logger.debug(f'Docking output for {args.ligand} already exists')
+    if args.output.exists():
+        logger.debug(f'Docking output for {args.sdf} already exists')
     else:
-
-        if args.filter:
-            with open(vstool.check_file(args.filter)) as f:
-                filters = json.load(f)
-        else:
-            filters = None
-
-        outdir, outs = vstool.mkdir(args.ligand.with_suffix('')), []
+        outdir, outs = Path(tempfile.mkdtemp(prefix='docking.')), []
         batches = MolIO.split_sdf(str(args.ligand), outdir / 'batch.', records=2500)
         keep = 0
 
-        for i, batch in enumerate(batches):
-            indices, ligands = ligand_list(batch, filters=filters, debug=args.debug)
+        for i, sdf in enumerate(batches):
+            indices, ligands = ligand_list(sdf, debug=args.debug)
             if ligands:
-                logger.debug(f'Docking ligands in {batch}')
-                p = unidock(indices)
-                if p:
-                    keep = p
-                processes = min(len(ligands), 32)
+                logger.debug(f'Docking ligands in {sdf}')
+                keep = unidock(indices)
+                processes = min(len(ligands), 16)
                 poses = vstool.parallel_cpu_task(best_pose, ligands, processes=processes)
                 poses = (pose for pose in poses if pose)
                 poses = sorted(poses, key=lambda x: x.score)
 
                 if poses:
-                    out = MolIO.write(poses, str(Path(batch).with_suffix('.docking.sdf')))
+                    out = MolIO.write(poses, sdf.with_suffix('.docking.sdf'))
                     outs.append(out)
                     logger.debug(f'Successfully saved {len(poses):,} poses to {out}.')
+                    if not keep:
+                        cmder.run(f'rm -rf {sdf.with_suffix("")}')
                 else:
-                    logger.debug(f'No pose was saved to docking output for batch {batch}')
+                    logger.warning(f'No pose was saved to docking output for batch {sdf}')
             else:
-                logger.debug(f'No ligands was found in batch {batch}')
+                logger.warning(f'No ligands was found in batch {sdf}')
 
             if args.debug and i == 3:
                 break
 
-        with open(output, 'w') as o:
+        opener = gzip.open if args.output.name.endswith('.gz') else open
+        with opener(args.output, 'wt') as o:
             for out in outs:
                 with open(out) as f:
                     o.write(f.read())
-        logger.debug(f'Docking results for {args.ligand} was saved to {output}')
+        logger.debug(f'Docking results for {args.sdf} was saved to {args.output}')
 
         if not args.debug and not keep:
             cmder.run(f'rm -r {outdir}')
