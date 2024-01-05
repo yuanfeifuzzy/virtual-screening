@@ -64,11 +64,13 @@ def main():
     
     cmds = [source, cd]
     if args.filter:
-        cmd = ['vs-ligand-filter', args.sdf, args.filter, f'--output {args.outdir}/{args.sdf.name}']
-        cmds.append(vstool.qvd(cmd, args))
+        sdf = args.outdir / 'ligands.sdf'
+        cmds.append(vstool.qvd(['vs-ligand-filter', args.sdf, args.filter, f'--output {sdf}'], args))
+    else:
+        sdf = args.sdf
     
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
-    cmd = ['vs-docking', args.sdf, f'{args.pdb}qt',
+    cmd = ['vs-docking', sdf, f'{args.pdb}qt',
            f'--center {cx} {cy} {cz}', f'--size {sx} {sy} {sz}',
            f'--exe {args.docker}', f'--task {args.task}']
     if args.flexible:
