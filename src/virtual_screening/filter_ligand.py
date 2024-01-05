@@ -107,7 +107,7 @@ def filtering(sdf, filters, outdir=None, output=None, cpu=8, quiet=False, verbos
 def main():
     parser = argparse.ArgumentParser(prog='vs-filter-ligand', description=__doc__.strip())
     parser.add_argument('sdf', help="Path to a SDF file contains prepared ligands", type=vstool.check_file)
-    parser.add_argument('filters', help="Path to JSON file contains filters", type=vstool.check_file)
+    parser.add_argument('filter', help="Path to JSON file contains filters", type=vstool.check_file)
     parser.add_argument('--outdir', help="Path to a directory for saving individual SDF files passed filters")
     parser.add_argument('--output', help="Path to a SDF file for saving ligands passed filters")
     
@@ -122,7 +122,7 @@ def main():
     parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
     
     args = parser.parse_args()
-    filtering(args.sdf, args.filters, outdir=args.outdir, output=args.output, quiet=args.quiet, verbose=args.verbose,
+    filtering(args.sdf, args.filter, outdir=args.outdir, output=args.output, quiet=args.quiet, verbose=args.verbose,
               debug=args.debug)
 
 
