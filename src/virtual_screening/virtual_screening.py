@@ -33,9 +33,11 @@ def main():
                                       "downstream analysis, default: %(default)s", type=float, default=0)
     parser.add_argument('--clusters', help="Number of clusters for clustering top poses, "
                                            "default: %(default)s", type=int, default=100)
-    parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
+    parser.add_argument('--time', type=float, default=0,
+                        help="Molecule dynamics simulation time in nanosecond, default: %(default)s")
     
     parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
+    parser.add_argument('--name', help="Name of the virtual screening job, default: %(default)s", default='vs')
     parser.add_argument('--day', type=int, default=10, help="Number of days the job needs to run, default: %(default)s")
     parser.add_argument('--email', help='Email address for send status change emails')
     parser.add_argument('--email-type', help='Email type for send status change emails, default: %(default)s',
@@ -91,7 +93,8 @@ def main():
         vstool.info_and_exit(f'Post docking job will not run due to neither top no residue is set')
     
     vstool.submit('\n'.join(cmds), cpus_per_task=64,
-                  job_name='vs', day=args.day, hour=0, directives=directives, partition='analysis',
+                  job_name=args.name or 'vs', day=args.day, hour=0,
+                  directives=directives, partition='analysis',
                   email=args.email, mail_type=args.email_type, log='%x.%j.log',
                   script=args.outdir / 'vs.sh', delay=args.delay, hold=args.hold)
 
