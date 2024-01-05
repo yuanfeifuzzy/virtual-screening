@@ -68,6 +68,10 @@ def main():
         cmds.append(vstool.qvd(['vs-ligand-filter', args.sdf, args.filter, f'--output {sdf}'], args))
     else:
         sdf = args.sdf
+        
+    pdbqt = f'{args.pdb}qt'
+    if not Path(pdbqt).exists():
+        vstool.error_and_exit(f'Could not find prepared receptor {pdbqt}', task=args.task, status=-80)
     
     (cx, cy, cz), (sx, sy, sz) = args.center, args.size
     cmd = ['vs-docking', sdf, f'{args.pdb}qt',
