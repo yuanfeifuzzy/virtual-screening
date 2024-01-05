@@ -34,7 +34,7 @@ def main():
         if args.scratch:
             os.unlink(x)
     if df:
-        df = pd.concat(df)
+        df = pd.concat(df).sort_values(by='score')
         columns = ['ligand', 'score']
         df = df[columns + [c for c in df.columns if c not in columns]]
         df.to_csv(args.wd / args.summary, index=False, float_format='%.4f')

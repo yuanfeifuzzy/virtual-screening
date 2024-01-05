@@ -123,7 +123,7 @@ def parse(wd):
         logger.debug(f'Successfully saved rmsd results to {args.outdir / wd.name}.rmsd.csv')
 
         archive = args.outdir / f'{wd.name}.md.zip'
-        cmder.run(f'zip -r {archive} rmsd.csv md.eaf md-out.cms md_trj/', cwd=str(wd), fmt_cmd=False)
+        cmder.run(f'zip -r -j {archive} rmsd.csv md.eaf md-out.cms md_trj/', cwd=str(wd), fmt_cmd=False)
 
 
 def simulate(sdf, mae=None):
