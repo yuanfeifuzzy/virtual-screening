@@ -11,87 +11,96 @@ import sys
 import argparse
 import traceback
 from pathlib import Path
-from multiprocessing import cpu_count
 
 import cmder
 import MolIO
 import vstool
-from loguru import logger
+
 
 parser = argparse.ArgumentParser(prog='post-docking', description=__doc__.strip())
-parser.add_argument('wd', help="Path to a directory contains docking output", type=vstool.check_dir)
+parser.add_argument('sdf', help="Path to a SDF file contains docking poses")
 parser.add_argument('pdb', help="Path to a PDB file contains receptor structure", type=vstool.check_file)
 
-parser.add_argument('--residue', nargs='*', type=int,
-                    help="Residue numbers that interact with ligand via hydrogen bond")
-parser.add_argument('--top', help="Percentage of top poses need to be retained for "
-                                  "downstream analysis, default: %(default)s", type=float, default=10)
-parser.add_argument('--clusters', help="Number of clusters for clustering top poses", type=int)
-parser.add_argument('--method', help="Method for generating fingerprints, default: %(default)s",
+parser.add_argument('-r', '--residue', nargs='*', type=int,
+                        help="Residue numbers that interact with ligand via hydrogen bond")
+parser.add_argument('-t', '--top', help="Percentage of top poses need to be retained for "
+                                                "downstream analysis, default: %(default)s", type=float, default=10)
+parser.add_argument('-c', '--clusters', help="Number of clusters for clustering top poses, "
+                                                "default: %(default)s", type=int, default=1000)
+parser.add_argument('-m', '--method', help="Method for generating fingerprints, default: %(default)s",
                     default='morgan2', choices=('morgan2', 'morgan3', 'ap', 'rdk5'))
-parser.add_argument('--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
+parser.add_argument('-b', '--bits', help="Number of fingerprint bits, default: %(default)s", default=1024, type=int)
 
-parser.add_argument('--time', type=float, help="MD simulation time, default: %(default)s ns.")
-parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
-parser.add_argument('--batch', type=int, help="Number of batches that the SDF for MD will be split to, "
-                                                    "default: %(default)s", default=0)
-parser.add_argument('--device', help='Comma separated list of GPU device indices')
+parser.add_argument('--schrodinger', help='Path to Schrodinger Suite root directory, default: %(default)s',
+                        type=vstool.check_dir, default='/software/SchrodingerSuites/2022.4')
 
+parser.add_argument('--task', type=int, default=0, help="ID associated with this task")
+parser.add_argument('--cpu', type=int, default=32,
+                    help="Maximum number of CPUs can be used for parallel processing, default: %(default)s")
+
+parser.add_argument('-q', '--quiet', help='Process data quietly without debug and info message', action='store_true')
+parser.add_argument('-v', '--verbose', help='Process data verbosely with debug and info message', action='store_true')
 parser.add_argument('--debug', help='Enable debug mode (for development purpose).', action='store_true')
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
-vstool.setup_logger(verbose=True)
+logger = vstool.setup_logger(quiet=args.quiet, verbose=args.verbose)
+
+outdir = Path(args.sdf).parent
+os.chdir(outdir)
+
+setattr(args, 'outdir', outdir)
+setattr(args, 'result', outdir / 'cluster.pose.sdf')
 
 
-def concatenate_sdf():
-    sdf = args.wd / 'docking.sdf'
-    cmder.run(f'cat {args.wd}/*.docking.sdf > {sdf}')
-    if not args.debug:
-        cmder.run(f'rm {args.wd}/*.docking.sdf')
-    cmder.run(f'cp {sdf} {args.outdir / sdf.name}')
-    return sdf
+def interaction_pose(sdf, out='interaction.pose.sdf'):
+    if Path(out).exists():
+        logger.debug(f'Output {out} already exists, skip re-processing')
+    else:
+        if args.residue:
+            logger.debug(f'Filtering pose with residue {args.residue} hydrogen bond interaction')
+            cmd = (f'vs-interaction-pose {sdf} {args.pdb} --schrodinger {args.schrodinger} '
+                   f'--residue {" ".join(str(x) for x in args.residue)} '
+                   f'--output {out} --task {args.task} --verbose')
+            p = cmder.run(cmd, fmt_cmd=False, exit_on_error=False, debug=True)
+            if p.returncode:
+                out = ''
+        else:
+            logger.debug(f'No residue was provided, retrieving top {args.top} percent poses')
+            num = sum(1 for _ in MolIO.parse_sdf(sdf))
+            n = int(num * args.top / 100)
+            with open(out, 'w') as o:
+                for i, s in enumerate(MolIO.parse_sdf(sdf)):
+                    if i == n:
+                        break
+                    o.write(s.sdf(title=f'{s.title}_{s.score}'))
+    return out
+                
+
+def cluster_pose(sdf, out=args.result.name):
+    if Path(out).exists():
+        logger.debug(f'Output {out} already exists, skip re-processing')
+    else:
+        num = sum(1 for _ in MolIO.parse_sdf(sdf))
+        if num <= args.clusters:
+            logger.debug(f'Only {num} poses were found in {sdf}, no clustering will be performed')
+            cmder.run(f'cp {sdf} {out}')
+        else:
+            logger.debug(f'Clustering {num:,} poses into {args.clusters:,} clusters')
+            cmd = (f'vs-cluster-pose {sdf} --clusters {args.clusters} --cpu {args.cpu} --task {args.task} '
+                   f'--method {args.method} --bits {args.bits} --verbose')
+            p = cmder.run(cmd, exit_on_error=False, debug=True)
+            if p.returncode:
+                raise RuntimeError(f'Failed to run cluster-pose')
 
 
 def main():
-    sdf, root = concatenate_sdf(), Path(vstool.check_exe("python")).parent
-
-    if args.residue or args.clusters:
-        interaction_pose = args.wd / 'interaction.pose.sdf'
-        cmd = f'interaction-pose {sdf} {args.pdb} --output {interaction_pose}'
-        if args.residue:
-            cmd = f'{cmd} --residue {" ".join(str(x) for x in args.residue)}'
-        cmder.run(cmd, exit_on_error=True, debug=True)
-
-        cluster_pose = args.wd / 'cluster.pose.sdf'
-        cmd = (f'cluster-pose {interaction_pose} --clusters {args.clusters} --method {args.method} --bits {args.bits} '
-               f'--top {args.top} --output {cluster_pose}')
-        cmder.run(cmd, exit_on_error=True, debug=True)
-        cmder.run(f'cp {cluster_pose} {args.outdir}/')
-
-        if args.time:
-            summary, md = args.outdir / 'docking.md.summary.csv', root / 'molecule-dynamics'
-            wd, mae, commands = vstool.mkdir(args.wd / 'md'), args.wd / 'receptor.mae', args.wd / 'md.commands.txt'
-
-            if not mae.exists():
-                struct_convert = '/work/02940/ztan818/ls6/software/DESRES/2023.2/utilities/structconvert'
-                cmder.run(f'{struct_convert} {args.pdb} {mae}', exit_on_error=True)
-
-            if args.batch:
-                sdfs = MolIO.batch_sdf(str(cluster_pose), args.batch, str(args.wd / 'cluster.pose.'))
-                devices = args.device.split(',')
-            else:
-                sdfs = [s.sdf(output=wd / f'{s.title}.sdf') for s in MolIO.parse_sdf(cluster_pose) if s.mol]
-                devices = ['0'] * len(sdfs)
-
-            with open(commands, 'w') as o:
-                for sdf, device in zip(sdfs, devices):
-                    cuda = f'export CUDA_VISIBLE_DEVICES={device}'
-                    cmd = f'{cuda} && {md} {sdf} {mae} --time {int(1000*args.time)} --outdir {args.outdir}'
-                    if args.debug:
-                        cmd = f'{cmd} --debug'
-                    o.write(f'{cmd}\n')
-            logger.debug(f'Successfully saved {len(sdfs)} md launch commands to {commands}')
+    if args.result.exists():
+        logger.debug(f'Post docking analysis result {args.result} already exists, skip re-docking')
+    else:
+        sdf = interaction_pose(vstool.check_file(args.sdf, task=args.task))
+        if sdf:
+            cluster_pose(sdf)
 
 
 if __name__ == '__main__':

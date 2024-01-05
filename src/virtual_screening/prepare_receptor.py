@@ -16,21 +16,23 @@ from datetime import timedelta
 import cmder
 import vstool
 
-parser = argparse.ArgumentParser(prog='receptor-preparation', description=__doc__.strip())
+parser = argparse.ArgumentParser(prog='vs-prepare-receptor', description=__doc__.strip())
 parser.add_argument('pdb', help="Path to the receptor in PDB format file", type=vstool.check_file)
 parser.add_argument('--center', help="The X, Y, and Z coordinates of the center",
                     type=float, nargs='+', required=True)
 parser.add_argument('--size', help="The size in the X, Y, and Z dimension (Angstroms)",
                     type=int, nargs='*', default=[15, 15, 15])
 parser.add_argument('--outdir', help="Path to a directory for saving output files", type=vstool.mkdir)
+parser.add_argument('--autodock4', help="Path to AutdoDock 4 installation directory", type=vstool.mkdir)
+parser.add_argument('--mgltools', help="Path to MGLTools installation directory", type=vstool.mkdir)
 parser.add_argument('--version', version=vstool.get_version(__package__), action='version')
 
 args = parser.parse_args()
 logger = vstool.setup_logger(verbose=True)
 
 def main():
-    mgltools = '/work/08944/fuzzy/share/software/mgltools'
-    autodock4 = '/work/08944/fuzzy/share/software/autodock4'
+    mgltools = args.mgltools or '/software/MGLTools'
+    autodock4 = args.autdock4 or '/software/AutoDock/4.2.6/'
 
     __python__ = f'{mgltools}/bin/pythonsh'
     __autodocktools__ = f'{mgltools}/MGLToolsPckgs/AutoDockTools/Utilities24'

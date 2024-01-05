@@ -1,6 +1,4 @@
-tests/data
-tests/sdf
-tests/pdbqt
+tests
 
 ### Python template
 # Byte-compiled / optimized / DLL files

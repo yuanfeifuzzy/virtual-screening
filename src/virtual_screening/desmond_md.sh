@@ -49,7 +49,7 @@ sys_build_out=$workdir/sys.cms
 mkdir -p "$workdir"
 cd "$workdir" || exit 1
 
-Desmond="${Desmond:=/work/02940/ztan818/ls6/software/DESRES/2023.2}"
+Desmond="${Desmond:=/software/Desmond/2023.2}"
 
 # Step 1: system building
 # write msj files
@@ -293,3 +293,4 @@ EOF
   -o "$md_out" \
   -lic DESMOND_ACADEMIC:16 \
   -WAIT
+
